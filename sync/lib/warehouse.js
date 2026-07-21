@@ -38,20 +38,24 @@ export async function fetchWarehouseStock(username, password) {
   res = await fetch(`${BASE}/download/${latest}`, { headers: { "Cookie": cookieHeader(jar) } });
   if (!res.ok) throw new Error(`zipダウンロード失敗 ${res.status}: ${latest}`);
   const zipBuf = Buffer.from(await res.arrayBuffer());
-  // ⑤ 解凍 → xlsx
+  // ⑤ 解凍（ZIPはパスワード付き＝ログインと同じパスワード）→ xlsx
   const AdmZip = (await import("adm-zip")).default;
   const zip = new AdmZip(zipBuf);
   const entry = zip.getEntries().find((e) => /\.xlsx$/i.test(e.entryName)) || zip.getEntries().find((e) => /\.csv$/i.test(e.entryName));
   if (!entry) throw new Error("zip内にxlsx/csvが見つかりません");
+  let entryData;
+  try { entryData = entry.getData(password); }   // ZIPパスワード = ログインパスワード
+  catch (e) { throw new Error("zipの解凍に失敗（パスワード誤り、またはAES暗号で非対応の可能性）: " + e.message); }
+  if (!entryData || !entryData.length) throw new Error("zip解凍結果が空（パスワード誤りの可能性）");
   const map = {};
   if (/\.csv$/i.test(entry.entryName)) {
     const { parseCSV } = await import("./sheets.js");
-    const rows = parseCSV(entry.getData().toString("utf8"));
+    const rows = parseCSV(entryData.toString("utf8"));
     for (let i = 1; i < rows.length; i++) { const code = String(rows[i][2] || "").trim().toUpperCase(); const st = Number(String(rows[i][5] || "").replace(/,/g, "")); if (/^ADS/i.test(code)) map[code] = (map[code] || 0) + (Number.isFinite(st) ? st : 0); }
   } else {
     const ExcelJS = (await import("exceljs")).default;
     const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(entry.getData());
+    await wb.xlsx.load(entryData);
     const ws = wb.worksheets[0];
     ws.eachRow((row, rn) => {
       if (rn === 1) return;
