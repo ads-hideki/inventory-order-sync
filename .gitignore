@@ -1,0 +1,39 @@
+# 認証情報・シークレット（絶対にコミットしない）
+serviceAccount.json
+*serviceAccount*.json
+.env
+.env.local
+sync/.env
+functions/.env
+
+# 依存関係
+node_modules/
+sync/node_modules/
+functions/node_modules/
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# OS
+desktop.ini
+.DS_Store
+
+# 生成物
+sync/out/
+*.log
+
+# ===== パブリックリポジトリには「同期の自動化コード」だけを載せる =====
+# Webアプリ本体・業務データ（発注先名・単価・商品データ等）は公開しない。
+# これらは Firebase へ直接デプロイ（GitHubには載せない）。
+public/
+functions/
+docs/
+firebase.json
+firestore.rules
+firestore.indexes.json
+.firebaserc
+/README.md
+sync/data/

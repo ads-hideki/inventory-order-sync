@@ -1,0 +1,27 @@
+# 【選択肢A: GitHub Actions（無料）】毎朝6:00(JST)に同期を実行
+# 使う場合: このリポジトリの Settings > Secrets に FIREBASE_SERVICE_ACCOUNT を登録
+# 使わない場合(Blaze/Cloud Functionsに寄せる場合): このファイルは削除でOK
+name: daily-sync
+on:
+  schedule:
+    - cron: "0 21 * * *"   # UTC 21:00 = JST 06:00
+  workflow_dispatch: {}     # 手動実行も可
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: install
+        working-directory: sync
+        run: npm ci || npm install
+      - name: run sync
+        working-directory: sync
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          SALES_SHEET_ID: ${{ secrets.SALES_SHEET_ID }}
+          OFFICE_SHEET_ID: ${{ secrets.OFFICE_SHEET_ID }}
+          WAREHOUSE_ID: ${{ secrets.WAREHOUSE_ID }}
+          WAREHOUSE_PASS: ${{ secrets.WAREHOUSE_PASS }}
+        run: node sync.js

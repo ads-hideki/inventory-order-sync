@@ -1,0 +1,16 @@
+{
+  "name": "ichigen-sync",
+  "version": "0.1.0",
+  "description": "一元管理システム: スプレッドシート/倉庫CSVを読み込み、必要発注数を計算してFirestoreへ同期",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "sync": "node sync.js",
+    "dry": "node sync.js --dry-run"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "adm-zip": "^0.5.16",
+    "exceljs": "^4.4.0"
+  }
+}
