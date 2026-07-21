@@ -12,27 +12,40 @@ function mergeCookies(jar, res) {
 
 export async function fetchWarehouseStock(username, password) {
   if (!username || !password) throw new Error("倉庫の認証情報(WAREHOUSE_ID/WAREHOUSE_PASS)が未設定です");
+  const DBG = process.env.WAREHOUSE_DEBUG !== "0";
   const jar = {};
   // ① ログインページ → CSRFトークン＆セッションCookie
-  let res = await fetch(`${BASE}/login`, { redirect: "manual" });
+  let res = await fetch(`${BASE}/login`, { redirect: "manual", headers: { "User-Agent": "Mozilla/5.0" } });
   mergeCookies(jar, res);
   const loginHtml = await res.text();
   const m = loginHtml.match(/name="_csrfToken"[^>]*value="([^"]+)"/);
   const csrf = m ? m[1] : "";
+  if (DBG) console.log(`[wh] ①login GET status=${res.status} csrf=${csrf ? "取得(" + csrf.length + "字)" : "なし"} cookies=[${Object.keys(jar).join(",")}]`);
   // ② ログインPOST
   const body = new URLSearchParams({ _method: "POST", _csrfToken: csrf, username, password });
   res = await fetch(`${BASE}/login`, {
     method: "POST", redirect: "manual",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", "Cookie": cookieHeader(jar) },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "Cookie": cookieHeader(jar), "User-Agent": "Mozilla/5.0", "Referer": `${BASE}/login` },
     body,
   });
   mergeCookies(jar, res);
+  if (DBG) console.log(`[wh] ②login POST status=${res.status} location=${res.headers.get("location") || "なし"} cookies=[${Object.keys(jar).join(",")}]`);
+  // 302リダイレクト先を辿る（未認証なら/loginに戻される）
+  const loc = res.headers.get("location");
   // ③ 一覧ページ → 最新のzipリンクを抽出
-  res = await fetch(`${BASE}/index`, { redirect: "manual", headers: { "Cookie": cookieHeader(jar) } });
+  res = await fetch(`${BASE}/index`, { redirect: "manual", headers: { "Cookie": cookieHeader(jar), "User-Agent": "Mozilla/5.0" } });
   mergeCookies(jar, res);
   const indexHtml = await res.text();
-  const links = [...indexHtml.matchAll(/\/utopia_web\/download\/([\w.\-]+\.zip)/g)].map((x) => x[1]);
-  if (!links.length) throw new Error("ダウンロードリンクが見つかりません（ログイン失敗の可能性・CSRF/認証を確認）");
+  const loggedIn = /ログアウト|logout|Logout/.test(indexHtml);
+  const stillLogin = /name="password"|name="_csrfToken"/.test(indexHtml) && !loggedIn;
+  const zipCount = (indexHtml.match(/\.zip/g) || []).length;
+  const dlCount = (indexHtml.match(/download\//g) || []).length;
+  if (DBG) console.log(`[wh] ③index GET status=${res.status} 長さ=${indexHtml.length} ログイン後=${loggedIn} ログイン画面のまま=${stillLogin} .zip出現=${zipCount} download/出現=${dlCount} POST後location=${loc || "なし"}`);
+  const links = [...indexHtml.matchAll(/download\/([\w.\-]+\.zip)/g)].map((x) => x[1]);
+  if (!links.length) {
+    if (stillLogin) throw new Error("ログインに失敗しています（/index がログイン画面のまま）。ID/パスワード・CSRF処理を確認してください");
+    throw new Error(`ダウンロードリンクが見つかりません（zip出現=${zipCount}, download/出現=${dlCount}）。/index の構造が想定と異なる可能性`);
+  }
   const latest = [...new Set(links)].sort().at(-1); // 日付-時刻順で最新
   // ④ zip取得
   res = await fetch(`${BASE}/download/${latest}`, { headers: { "Cookie": cookieHeader(jar) } });
