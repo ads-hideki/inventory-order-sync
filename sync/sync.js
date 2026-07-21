@@ -32,7 +32,7 @@ async function main() {
   // Firestoreから orders と policy を取得（dryRun時はスキップ）
   let orders = [], policy = {}, db = null;
   if (!CONFIG.dryRun) {
-    const { initFirestore, readOrders, readPolicy, readDeleted, writeProducts } = await import("./lib/firestore.js");
+    const { initFirestore, readOrders, readPolicy, readDeleted, writeProducts, cleanupOld } = await import("./lib/firestore.js");
     db = initFirestore();
     orders = await readOrders(db);
     policy = await readPolicy(db);
@@ -48,6 +48,9 @@ async function main() {
       await db.collection("salesHistory").doc(month).set({ month, recordedAt: now, data });
       console.log(`[sync] 月次スナップショット記録: ${month}（${Object.keys(data).length}商品）`);
     }
+    // 古い履歴・完了発注を整理（約1年より前）
+    const cu = await cleanupOld(db);
+    if (cu.delHist || cu.delOrd) console.log(`[sync] 整理  ${cu.cutoff}以前を削除: 履歴${cu.delHist}件 / 完了発注${cu.delOrd}件`);
     const need = products.filter((p) => p.need > 0).length;
     console.log(`[sync] 完了  商品${products.length}件 書込 / 要発注${need}品目 / 削除除外${deleted.size}件 / ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   } else {
