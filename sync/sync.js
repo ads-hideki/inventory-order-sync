@@ -52,6 +52,10 @@ async function main() {
     const cu = await cleanupOld(db);
     if (cu.delHist || cu.delOrd) console.log(`[sync] 整理  ${cu.cutoff}以前を削除: 履歴${cu.delHist}件 / 完了発注${cu.delOrd}件`);
     const need = products.filter((p) => p.need > 0).length;
+    // 最終同期時刻を記録（画面の「最終同期」表示用）
+    await db.collection("settings").doc("system").set({
+      updatedAt: now, lastSyncSummary: `商品${products.length}件・要発注${need}品目・倉庫: ${whInfo}`,
+    }, { merge: true });
     console.log(`[sync] 完了  商品${products.length}件 書込 / 要発注${need}品目 / 削除除外${deleted.size}件 / ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   } else {
     const products = computeProducts({ sales, office, warehouse, orders, policy });
