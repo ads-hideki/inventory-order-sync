@@ -1,0 +1,33 @@
+# 出荷依頼（UF倉庫 → FBA / RSL）の同期
+#   定刻起動: ec-dashboard の VPS の cron が workflow_dispatch で起動する（teps-2 の同期の 15 分後）
+#     8:45 / 9〜21 時の毎時 15 分 / 0:15 / 6:15（0:15 の回で前日分の在庫履歴も保存）
+#   確定した出荷依頼のスプレッドシート出力もこの中で行う
+# 必要な Secrets: FIREBASE_SERVICE_ACCOUNT（daily-sync と同じ発注管理の鍵）
+name: rp-sync
+on:
+  workflow_dispatch:
+    inputs:
+      args:
+        description: "追加の引数（例: --daily / --dry-run）"
+        required: false
+        default: ""
+concurrency:
+  group: rp-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: install
+        working-directory: sync
+        run: npm ci || npm install
+      - name: run rp sync
+        working-directory: sync
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          ARGS: ${{ github.event.inputs.args }}
+        run: node rp_sync.js $ARGS

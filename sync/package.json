@@ -3,14 +3,20 @@
   "version": "0.1.0",
   "description": "一元管理システム: スプレッドシート/倉庫CSVを読み込み、必要発注数を計算してFirestoreへ同期",
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "sync": "node sync.js",
-    "dry": "node sync.js --dry-run"
+    "dry": "node sync.js --dry-run",
+    "rp": "node rp_sync.js",
+    "rp:dry": "node rp_sync.js --dry-run",
+    "rp:seed": "node rp_seed.js"
   },
   "dependencies": {
     "firebase-admin": "^12.6.0",
     "adm-zip": "^0.5.16",
-    "exceljs": "^4.4.0"
+    "exceljs": "^4.4.0",
+    "google-auth-library": "^9.14.0"
   }
 }

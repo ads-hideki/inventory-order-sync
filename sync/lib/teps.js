@@ -117,3 +117,6 @@ export async function fetchTeps() {
   };
   return { sales: out, office, warehouse, info };
 }
+
+// 出荷依頼（rp_sync.js）からも使う
+export { getDoc as tepsGetDoc, listCollection as tepsList, upperIndex };
