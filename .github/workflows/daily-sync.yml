@@ -1,14 +1,20 @@
-# 【選択肢A: GitHub Actions（無料）】毎朝6:00(JST)に同期を実行
-# 使う場合: このリポジトリの Settings > Secrets に FIREBASE_SERVICE_ACCOUNT を登録
-# 使わない場合(Blaze/Cloud Functionsに寄せる場合): このファイルは削除でOK
+# 在庫・発注 一元管理システムの日次同期（毎朝 8:30 JST）
+#   データ取得元: teps-2（EC 売上・在庫管理）の Firestore。teps-2 は毎朝 8:00 に在庫を取り込むので 30 分後に実行する。
+#   定刻起動: ec-dashboard の VPS（さくらのVPS）の cron が workflow_dispatch で起動する（GitHub の schedule は数時間ずれるため）。
+#   下の schedule は VPS 起動の稼働確認が取れるまでの暫定フォールバック。確認後に削除する。
+# 必要な Secrets: FIREBASE_SERVICE_ACCOUNT（在庫システムの鍵）のみ
 name: daily-sync
 on:
   schedule:
-    - cron: "0 21 * * *"   # UTC 21:00 = JST 06:00
-  workflow_dispatch: {}     # 手動実行も可
+    - cron: "30 23 * * *"   # 暫定: UTC 23:30 = JST 08:30（VPS起動の確認後に削除）
+  workflow_dispatch: {}      # VPS の cron / 手動実行
+concurrency:
+  group: daily-sync
+  cancel-in-progress: false
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -20,8 +26,4 @@ jobs:
         working-directory: sync
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          SALES_SHEET_ID: ${{ secrets.SALES_SHEET_ID }}
-          OFFICE_SHEET_ID: ${{ secrets.OFFICE_SHEET_ID }}
-          WAREHOUSE_ID: ${{ secrets.WAREHOUSE_ID }}
-          WAREHOUSE_PASS: ${{ secrets.WAREHOUSE_PASS }}
         run: node sync.js

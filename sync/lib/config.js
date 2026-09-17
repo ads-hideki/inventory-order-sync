@@ -1,5 +1,8 @@
 // 設定（環境変数で上書き可）。スプレッドシートIDやCSVパスはここに集約。
 export const CONFIG = {
+  // データ取得元: "teps"（既定・teps-2 の Firestore）/ "sheets"（旧: スプレッドシート＋倉庫システム）
+  source: (process.env.DATA_SOURCE || "teps").toLowerCase(),
+
   // Googleスプレッドシート（公開URLからCSVエクスポートで取得）
   // シートIDは公開しない（Secrets/環境変数から）。ローカルテストは env で指定。
   salesSheet: {
