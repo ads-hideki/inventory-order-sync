@@ -16,7 +16,6 @@
   "dependencies": {
     "firebase-admin": "^12.6.0",
     "adm-zip": "^0.5.16",
-    "exceljs": "^4.4.0",
-    "google-auth-library": "^9.14.0"
+    "exceljs": "^4.4.0"
   }
 }

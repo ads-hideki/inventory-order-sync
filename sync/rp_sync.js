@@ -4,7 +4,6 @@
 //   2) 新しい UF在庫商品を rp_items に追加（入数は未設定のまま → 画面で「新規」表示）
 //   3) 0 時台の回だけ、前日分の在庫を rp_channel_daily に保存
 //   4) 未着の自動推定（着荷候補にするだけ。着荷済みにするのは人）
-//   5) 確定済みの出荷依頼をスプレッドシートに出力 ＋ 未着一覧タブを更新
 // 使い方: node rp_sync.js [--dry-run] [--daily]
 import { fetchRpSource, estimateArrivals } from "./lib/rp.js";
 
@@ -30,7 +29,6 @@ async function main() {
   }
 
   const { initFirestore } = await import("./lib/firestore.js");
-  const { FieldValue } = await import("firebase-admin/firestore");
   const db = initFirestore();
   const now = new Date();
 
@@ -90,36 +88,10 @@ async function main() {
   await flush();
   if (candidates) console.log(`[rp] 着荷候補 ${candidates}件`);
 
-  // 5) スプレッドシート出力
-  let exported = 0, sheetMsg = "出力先未設定";
-  if (cfg.spreadsheetId && process.env.FIREBASE_SERVICE_ACCOUNT) {
-    const { sheetsClient, writeInstruction, appendHistory, writeInTransit } = await import("./lib/rp_sheets.js");
-    const sc = sheetsClient(process.env.FIREBASE_SERVICE_ACCOUNT);
-    try {
-      const reqSnap = await db.collection("rp_requests").where("status", "==", "confirmed").get();
-      for (const d of reqSnap.docs) {
-        const req = { _id: d.id, ...d.data() };
-        const r = await writeInstruction(sc, cfg.spreadsheetId, req);
-        const h = await appendHistory(sc, cfg.spreadsheetId, req, r.title);
-        await d.ref.update({ status: "exported", exportedAt: now, sheetTab: r.title, exportError: FieldValue.delete() });
-        console.log(`[rp] 出力 ${r.title}: ${r.count}品目 / 履歴${h}行`);
-        exported++;
-      }
-      const open = ibSnap.docs.map((d) => ({ _id: d.id, ...d.data() }))
-        .filter((x) => ["in_transit", "partial", "candidate"].includes(x.status))
-        .sort((a, b) => a.shipDate.localeCompare(b.shipDate) || a.code.localeCompare(b.code));
-      await writeInTransit(sc, cfg.spreadsheetId, open);
-      sheetMsg = `出力${exported}件`;
-    } catch (e) {
-      sheetMsg = `出力エラー: ${e.message}`;
-      console.error("[rp] スプレッドシート出力エラー:", e.message, `（${sc.email} に編集権限があるか確認）`);
-    }
-  } else if (!process.env.FIREBASE_SERVICE_ACCOUNT) sheetMsg = "鍵が環境変数に無いため出力スキップ";
-
   await db.collection("rp_settings").doc("system").set({
-    lastSyncAt: now, info, itemCount: codes.length, lastSheetResult: sheetMsg,
+    lastSyncAt: now, info, itemCount: codes.length,
   }, { merge: true });
-  console.log(`[rp] 完了 ${((Date.now() - t0) / 1000).toFixed(1)}s / ${sheetMsg}`);
+  console.log(`[rp] 完了 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 }
 
 main().catch((e) => { console.error("[rp] エラー:", e); process.exit(1); });
