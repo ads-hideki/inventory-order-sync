@@ -1,44 +1,5 @@
-// スプレッドシート/CSVの行データ → 商品ごとの在庫・必要発注数を計算
-import { num } from "./sheets.js";
+// teps-2 から取得した販売数・在庫 → 商品ごとの必要発注数を計算
 import { CONFIG } from "./config.js";
-
-const isCode = (s) => /^ADS\d{3}/i.test(String(s || "").trim());
-
-// 販売数シート → { code: {name, vari, monthly, fba, rsl} }（初出のみ・重複コード除去）
-export function buildFromSales(rows) {
-  const c = CONFIG.salesSheet.col, out = {};
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i]; const code = String(r[c.code] || "").trim().toUpperCase();
-    if (!isCode(code) || out[code]) continue;
-    out[code] = {
-      code, name: (r[c.name] || "").trim(), vari: (r[c.vari] || "").trim(),
-      monthly: num(r[c.monthly]), fba: num(r[c.fba]), rsl: num(r[c.rsl]),
-      office: 0, warehouse: 0,
-    };
-  }
-  return out;
-}
-
-// 事務所在庫シート → { code: 在庫 }
-export function officeMap(rows) {
-  const c = CONFIG.officeSheet.col, m = {};
-  for (let i = 1; i < rows.length; i++) {
-    const code = String(rows[i][c.code] || "").trim().toUpperCase();
-    if (isCode(code)) m[code] = num(rows[i][c.stock]);
-  }
-  return m;
-}
-
-// 倉庫CSV → { code: 有効在庫数 }（同コード複数行は合算）
-export function warehouseMap(rows) {
-  if (!rows) return {};
-  const c = CONFIG.warehouseCol, m = {};
-  for (let i = 1; i < rows.length; i++) {
-    const code = String(rows[i][c.code] || "").trim().toUpperCase();
-    if (isCode(code)) m[code] = (m[code] || 0) + num(rows[i][c.stock]);
-  }
-  return m;
-}
 
 // ordersスナップショット → { code: {transit, prod} }
 export function orderAgg(orders) {

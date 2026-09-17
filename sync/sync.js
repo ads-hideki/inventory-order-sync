@@ -1,43 +1,21 @@
-// 日次同期のエントリポイント。
-//   GitHub Actions / Cloud Functions / ローカル手動  いずれからも呼べる。
-//   1) 販売数・事務所在庫スプレッドシート、倉庫CSVを読み込み
+// 日次同期のエントリポイント（毎朝 8:30 JST。VPS の cron → GitHub Actions）。
+//   1) teps-2 から 販売数(直近30日)・事務所在庫・UF倉庫在庫・FBA・RSL を取得（スプレッドシートは使わない）
 //   2) 生産中/輸送中をFirestoreから取得し、必要発注数を計算
 //   3) products を Firestore に書き込み（--dry-run なら書き込まず表示のみ）
 import { CONFIG } from "./lib/config.js";
-import { fetchSheet, readLocalCSV } from "./lib/sheets.js";
-import { buildFromSales, officeMap, warehouseMap, computeProducts } from "./lib/reorder.js";
+import { computeProducts } from "./lib/reorder.js";
+import { fetchTeps } from "./lib/teps.js";
 
 async function main() {
   const t0 = Date.now();
   console.log(`[sync] 開始  dryRun=${CONFIG.dryRun}`);
 
-  let sales, office, warehouse = {}, whInfo = "なし(据置)";
-  if (CONFIG.source === "teps") {
-    // teps-2（EC 売上・在庫管理）から 販売数・事務所在庫・UF倉庫在庫・FBA・RSL をまとめて取得
-    const { fetchTeps } = await import("./lib/teps.js");
-    const t = await fetchTeps();
-    sales = t.sales; office = t.office; warehouse = t.warehouse;
-    const jst = (s) => (s ? new Date(s).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }) : "-");
-    whInfo = `teps-2(UF ${jst(t.info.ufUpdated)})`;
-    console.log(`[sync] 読込  teps-2 商品${t.info.products}件 / 事務所 ${jst(t.info.officeUpdated)} / UF倉庫 ${jst(t.info.ufUpdated)} / RSL ${jst(t.info.rslUpdated)}`);
-    if (t.info.products === 0) throw new Error("teps-2 から商品を取得できませんでした（同期を中止）");
-  } else {
-    // 旧方式: スプレッドシート＋倉庫システム（DATA_SOURCE=sheets のときのみ）
-    const salesRows = await fetchSheet(CONFIG.salesSheet.id, CONFIG.salesSheet.gid);
-    const officeRows = await fetchSheet(CONFIG.officeSheet.id, CONFIG.officeSheet.gid);
-    sales = buildFromSales(salesRows);
-    office = officeMap(officeRows);
-    if (CONFIG.warehouseCsv) {
-      warehouse = warehouseMap(readLocalCSV(CONFIG.warehouseCsv)); whInfo = `ローカルCSV(${Object.keys(warehouse).length}件)`;
-    } else if (CONFIG.warehouseId && CONFIG.warehousePass) {
-      try {
-        const { fetchWarehouseStock } = await import("./lib/warehouse.js");
-        const r = await fetchWarehouseStock(CONFIG.warehouseId, CONFIG.warehousePass);
-        warehouse = r.map; whInfo = `倉庫システム(${r.filename}・${r.count}件)`;
-      } catch (e) { whInfo = `倉庫取得エラー(${e.message}) → 据え置き`; console.error("[sync] 倉庫取得失敗:", e.message); }
-    }
-    console.log(`[sync] 読込  販売=${salesRows.length}行 事務所=${officeRows.length}行 倉庫=${whInfo}`);
-  }
+  const t = await fetchTeps();
+  const { sales, office, warehouse } = t;
+  const jst = (s) => (s ? new Date(s).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }) : "-");
+  const whInfo = `teps-2(UF ${jst(t.info.ufUpdated)})`;
+  console.log(`[sync] 読込  teps-2 商品${t.info.products}件 / 事務所 ${jst(t.info.officeUpdated)} / UF倉庫 ${jst(t.info.ufUpdated)} / RSL ${jst(t.info.rslUpdated)}`);
+  if (t.info.products === 0) throw new Error("teps-2 から商品を取得できませんでした（同期を中止）");
 
   // Firestoreから orders と policy を取得（dryRun時はスキップ）
   let orders = [], policy = {}, db = null;
