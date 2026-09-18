@@ -1,4 +1,5 @@
 // 日次同期のエントリポイント（毎朝 8:30 JST。VPS の cron → GitHub Actions）。
+//   ・最後に画面用のまとめ文書(cache/…)を作る（lib/firestore.js buildCache）
 //   1) teps-2 から 販売数(直近30日)・事務所在庫・UF倉庫在庫・FBA・RSL を取得（スプレッドシートは使わない）
 //   2) 生産中/輸送中をFirestoreから取得し、必要発注数を計算
 //   3) products を Firestore に書き込み（--dry-run なら書き込まず表示のみ）
@@ -8,6 +9,13 @@ import { fetchTeps } from "./lib/teps.js";
 
 async function main() {
   const t0 = Date.now();
+  // まとめ文書だけ作り直す（初回導入時や、画面の表示がおかしい時の手動用）: node sync.js --cache-only
+  if (process.argv.includes("--cache-only")) {
+    const { initFirestore, buildCache } = await import("./lib/firestore.js");
+    const r = await buildCache(initFirestore());
+    console.log(`[sync] まとめ文書を作成  ${JSON.stringify(r)}`);
+    return;
+  }
   console.log(`[sync] 開始  dryRun=${CONFIG.dryRun}`);
 
   const t = await fetchTeps();
@@ -20,7 +28,7 @@ async function main() {
   // Firestoreから orders と policy を取得（dryRun時はスキップ）
   let orders = [], policy = {}, db = null;
   if (!CONFIG.dryRun) {
-    const { initFirestore, readOrders, readPolicy, readDeleted, writeProducts, cleanupOld } = await import("./lib/firestore.js");
+    const { initFirestore, readOrders, readPolicy, readDeleted, writeProducts, cleanupOld, buildCache } = await import("./lib/firestore.js");
     db = initFirestore();
     orders = await readOrders(db);
     policy = await readPolicy(db);
@@ -41,9 +49,11 @@ async function main() {
     if (cu.delHist || cu.delOrd) console.log(`[sync] 整理  ${cu.cutoff}以前を削除: 履歴${cu.delHist}件 / 完了発注${cu.delOrd}件`);
     const need = products.filter((p) => p.need > 0).length;
     // 最終同期時刻を記録（画面の「最終同期」表示用）
-    await db.collection("settings").doc("system").set({
-      updatedAt: now, lastSyncSummary: `商品${products.length}件・要発注${need}品目・倉庫: ${whInfo}`,
-    }, { merge: true });
+    const summary = `商品${products.length}件・要発注${need}品目・倉庫: ${whInfo}`;
+    await db.collection("settings").doc("system").set({ updatedAt: now, lastSyncSummary: summary }, { merge: true });
+    // 画面用のまとめ文書（読み取り回数削減）。最後に作るので、ここまでの書き込みがすべて入る
+    const cb = await buildCache(db, { lastSyncSummary: summary });
+    console.log(`[sync] まとめ文書  ${JSON.stringify(cb)}`);
     console.log(`[sync] 完了  商品${products.length}件 書込 / 要発注${need}品目 / 削除除外${deleted.size}件 / ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   } else {
     const products = computeProducts({ sales, office, warehouse, orders, policy });
