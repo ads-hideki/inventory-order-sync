@@ -1,4 +1,4 @@
-// 出荷依頼の商品マスタ（rp_items）に、今のスプレッドシートの入数・商品名・並び順を 1 回だけ入れる。
+// 出荷依頼の商品マスタ（rp_data/items）に、今のスプレッドシートの入数・商品名・並び順を 1 回だけ入れる。
 //   データ: data/rp_seed.json（業務データなので .gitignore 済みの sync/data/ に置く）
 //   使い方: node rp_seed.js           … 入数が未設定の項目だけ埋める
 //           node rp_seed.js --force   … シートの値で上書き
@@ -8,21 +8,19 @@ import { initFirestore } from "./lib/firestore.js";
 const FORCE = process.argv.includes("--force");
 const seed = JSON.parse(fs.readFileSync(new URL("./data/rp_seed.json", import.meta.url), "utf8"));
 const db = initFirestore();
-const snap = await db.collection("rp_items").get();
-const cur = {}; snap.docs.forEach((d) => (cur[d.id] = d.data()));
-let batch = db.batch(), n = 0, count = 0;
+const ref = db.collection("rp_data").doc("items");
+const snap = await ref.get();
+const items = (snap.exists && snap.data().items) || {};
+let count = 0;
 for (const [code, s] of Object.entries(seed)) {
-  const c = cur[code] || {};
-  const patch = { code };
+  const it = items[code] || { code, active: true, createdAt: new Date().toISOString() };
+  let touched = false;
   for (const k of ["name", "variation", "fbaCaseQty", "rslCaseQty", "sortOrder"]) {
     if (s[k] == null || s[k] === "") continue;
-    if (FORCE || c[k] == null || c[k] === "") patch[k] = s[k];
+    if (FORCE || it[k] == null || it[k] === "") { it[k] = s[k]; touched = true; }
   }
-  if (!cur[code]) { patch.active = true; patch.createdAt = new Date(); }
-  if (patch.fbaCaseQty != null || patch.rslCaseQty != null || (c.fbaCaseQty != null && c.rslCaseQty != null)) patch.isNew = false;
-  if (Object.keys(patch).length <= 1) continue;
-  batch.set(db.collection("rp_items").doc(code), patch, { merge: true }); count++;
-  if (++n >= 450) { await batch.commit(); batch = db.batch(); n = 0; }
+  if (it.fbaCaseQty && it.rslCaseQty) it.isNew = false;
+  if (touched) { items[code] = it; count++; }
 }
-if (n) await batch.commit();
-console.log(`[rp_seed] ${count}件 更新（シート ${Object.keys(seed).length}件）`);
+await ref.set({ items, updatedAt: new Date() }, { merge: true });
+console.log(`[rp_seed] ${count}件 更新（シート ${Object.keys(seed).length}件）/ 書き込み1件`);

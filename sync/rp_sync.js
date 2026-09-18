@@ -1,9 +1,11 @@
 // 出荷依頼（UF倉庫 → FBA / RSL）の同期。
 //   起動: VPS の cron → gh-dispatch.sh rp-sync.yml（teps-2 の同期の 15 分後）
-//   1) teps-2 から「UF在庫」商品の在庫・BL・売上・UF在庫を取得 → rp_channel_latest
-//   2) 新しい UF在庫商品を rp_items に追加（入数は未設定のまま → 画面で「新規」表示）
+//   1) teps-2 から「UF在庫」商品の在庫・BL・売上・UF在庫を取得 → rp_data/latest（1ドキュメントにまとめる）
+//   2) 新しい UF在庫商品を rp_data/items に追加（入数は未設定のまま → 画面で「新規」表示）
 //   3) 0 時台の回だけ、前日分の在庫を rp_channel_daily に保存
 //   4) 未着の自動推定（着荷候補にするだけ。着荷済みにするのは人）
+//   ※ Firestore の無料枠（1日 5万読み取り / 2万書き込み）に収めるため、
+//     商品ごとのデータは 1 ドキュメントにまとめている。1 回の同期で読み取り3・書き込み1〜3件。
 // 使い方: node rp_sync.js [--dry-run] [--daily]
 import { fetchRpSource, estimateArrivals } from "./lib/rp.js";
 
@@ -31,34 +33,27 @@ async function main() {
   const { initFirestore } = await import("./lib/firestore.js");
   const db = initFirestore();
   const now = new Date();
+  const latestRef = db.collection("rp_data").doc("latest");
+  const itemsRef = db.collection("rp_data").doc("items");
 
-  // 1) 最新値
-  const latestSnap = await db.collection("rp_channel_latest").get();
-  let batch = db.batch(), n = 0;
-  const flush = async () => { if (n) { await batch.commit(); batch = db.batch(); n = 0; } };
-  for (const c of codes) {
-    batch.set(db.collection("rp_channel_latest").doc(c), { ...rows[c], inSource: true, syncedAt: now });
-    if (++n >= 450) await flush();
-  }
-  for (const d of latestSnap.docs) {
-    if (!rows[d.id] && d.data().inSource !== false) { batch.update(d.ref, { inSource: false, syncedAt: now }); if (++n >= 450) await flush(); }
-  }
-  await flush();
+  // 1) 最新値（1ドキュメント）
+  const sorted = {}; for (const c of codes) sorted[c] = rows[c];
+  await latestRef.set({ rows: sorted, info, itemCount: codes.length, syncedAt: now });
 
-  // 2) 新しい商品を rp_items に追加
-  const itemsSnap = await db.collection("rp_items").get();
-  const have = new Set(itemsSnap.docs.map((d) => d.id));
+  // 2) 新しい商品を rp_data/items に追加（既存の入数や名前は触らない）
+  const itemsDoc = await itemsRef.get();
+  const items = (itemsDoc.exists && itemsDoc.data().items) || {};
   const added = [];
   for (const c of codes) {
-    if (have.has(c)) continue;
-    batch.set(db.collection("rp_items").doc(c), {
-      code: c, name: rows[c].name, variation: rows[c].variation,
-      fbaCaseQty: null, rslCaseQty: null, active: true, isNew: true, createdAt: now,
-    });
-    added.push(c); if (++n >= 450) await flush();
+    if (items[c]) continue;
+    items[c] = { code: c, name: rows[c].name, variation: rows[c].variation,
+      fbaCaseQty: null, rslCaseQty: null, active: true, isNew: true, createdAt: now.toISOString() };
+    added.push(c);
   }
-  await flush();
-  if (added.length) console.log(`[rp] 新規商品 ${added.length}件: ${added.join(", ")}`);
+  if (added.length) {
+    await itemsRef.set({ items, updatedAt: now }, { merge: true });
+    console.log(`[rp] 新規商品 ${added.length}件: ${added.join(", ")}`);
+  }
 
   // 3) 日次の在庫履歴（0 時台の回 = 前日の締め）
   const j = jstNow();
@@ -69,29 +64,24 @@ async function main() {
     console.log(`[rp] 日次履歴 ${day} を保存`);
   }
 
+  // 4) 未着の自動推定（未着が無ければ読み取り1件で終わる）
   const cfgDoc = await db.collection("rp_settings").doc("config").get();
   const cfg = cfgDoc.exists ? cfgDoc.data() : {};
-
-  // 4) 未着の自動推定
-  const since = new Date(Date.now() - 60 * 86400000);
-  const ibSnap = await db.collection("rp_inbound").where("confirmedAt", ">=", since).get();
+  const ibSnap = await db.collection("rp_inbound").where("status", "in", ["in_transit", "partial", "candidate"]).get();
   const groups = {};
   for (const d of ibSnap.docs) { const x = { _id: d.id, ...d.data() }; (groups[`${x.code}|${x.channel}`] ||= []).push(x); }
   let candidates = 0;
+  const batch = db.batch();
   for (const [key, list] of Object.entries(groups)) {
     const [code, channel] = key.split("|"); if (!rows[code]) continue;
     for (const e of estimateArrivals(list, rows[code], channel, cfg.arrivalThreshold ?? 0.9, now)) {
       const x = list.find((y) => y._id === e.id);
-      if (x.status === "in_transit") { batch.update(db.collection("rp_inbound").doc(e.id), { status: "candidate", candidateAt: now, estimatedQty: e.estimated }); candidates++; if (++n >= 450) await flush(); }
+      if (x.status === "in_transit") { batch.update(db.collection("rp_inbound").doc(e.id), { status: "candidate", candidateAt: now, estimatedQty: e.estimated }); candidates++; }
     }
   }
-  await flush();
-  if (candidates) console.log(`[rp] 着荷候補 ${candidates}件`);
+  if (candidates) { await batch.commit(); console.log(`[rp] 着荷候補 ${candidates}件`); }
 
-  await db.collection("rp_settings").doc("system").set({
-    lastSyncAt: now, info, itemCount: codes.length,
-  }, { merge: true });
-  console.log(`[rp] 完了 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  console.log(`[rp] 完了 ${((Date.now() - t0) / 1000).toFixed(1)}s（読み取り ${3 + ibSnap.size}件 / 書き込み ${1 + (added.length ? 1 : 0) + candidates}件）`);
 }
 
 main().catch((e) => { console.error("[rp] エラー:", e); process.exit(1); });
