@@ -14,10 +14,14 @@ export function orderAgg(orders) {
 }
 
 // 必要発注数
-export function reorderQty({ monthly, office, warehouse, fba, rsl, transit, prod, border, lot }) {
+// 必要発注数（画面の calc() と同じ式にすること）
+//   発注するか  … 在庫月数がボーダーを下回ったら
+//   いくつ発注か … 入庫までの間も売れるので「ボーダー＋リードタイム」分まで積む
+export function reorderQty({ monthly, office, warehouse, fba, rsl, transit, prod, border, lot, lead }) {
   const stock = office + warehouse + fba + rsl;
   const total = stock + transit + prod;
-  const raw = Math.max(0, monthly * border - total);
+  const trigger = monthly > 0 && total < monthly * border;
+  const raw = trigger ? Math.max(0, monthly * (border + (lead || 0) / 30) - total) : 0;
   const need = raw > 0 ? Math.ceil(raw / lot) * lot : 0;
   return { stock, total, need };
 }
@@ -34,8 +38,9 @@ export function computeProducts({ sales, office, warehouse, orders, policy }) {
     const pol = (policy && policy[code]) || {};
     const border = pol.border ?? CONFIG.defaults.border;
     const lot = pol.lot ?? CONFIG.defaults.lot;
-    const { stock, need } = reorderQty({ ...p, ...agg, border, lot });
-    list.push({ ...p, ...agg, border, lot, stock, need, folder: (code.match(/ADS(\d{3})/i) || [])[1] || null });
+    const lead = pol.lead ?? 0;                      // 発注〜入庫の日数（商品ごと・settings/borders）
+    const { stock, need } = reorderQty({ ...p, ...agg, border, lot, lead });
+    list.push({ ...p, ...agg, border, lot, lead, stock, need, folder: (code.match(/ADS(\d{3})/i) || [])[1] || null });
   }
   return list;
 }
