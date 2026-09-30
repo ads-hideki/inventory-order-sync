@@ -1,4 +1,4 @@
-// 日次同期のエントリポイント（毎朝 8:30 JST。VPS の cron → GitHub Actions）。
+// 同期のエントリポイント（8:30〜12:30 の毎時30分・1日5回 JST。VPS の cron → GitHub Actions）。
 //   ・最後に画面用のまとめ文書(cache/…)を作る（lib/firestore.js buildCache）
 //   1) teps-2 から 販売数(直近30日)・事務所在庫・UF倉庫在庫・FBA・RSL を取得（スプレッドシートは使わない）
 //   2) 生産中/輸送中をFirestoreから取得し、必要発注数を計算
@@ -38,8 +38,11 @@ async function main() {
     await writeProducts(db, products);
     // 毎月1日: 直近30日販売数のスナップショットを記録（発注目安の推移用）
     const now = new Date();
-    if (now.getDate() === 1 || CONFIG.snapshot) {
-      const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    //   日付は日本時間で判定する（GitHub のサーバーは UTC なので getDate() だと日本時間の2日朝になる）
+    //   1日5回動くので、その月の記録がまだ無い時（＝1日の最初の回 8:30）だけ書く
+    const jst = new Date(now.getTime() + 9 * 3600 * 1000);
+    const month = `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, "0")}`;
+    if ((jst.getUTCDate() === 1 && !(await db.collection("salesHistory").doc(month).get()).exists) || CONFIG.snapshot) {
       const data = {}; products.forEach((p) => { data[p.code] = p.monthly; });
       await db.collection("salesHistory").doc(month).set({ month, recordedAt: now, data });
       console.log(`[sync] 月次スナップショット記録: ${month}（${Object.keys(data).length}商品）`);

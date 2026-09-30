@@ -1,5 +1,6 @@
-# 在庫・発注 一元管理システムの日次同期（毎朝 8:30 JST）
-#   データ取得元: teps-2（EC 売上・在庫管理）の Firestore。teps-2 は毎朝 8:00 に在庫を取り込むので 30 分後に実行する。
+# 在庫・発注 一元管理システムの同期（8:30〜12:30 の毎時30分・1日5回 JST）
+#   データ取得元: teps-2（EC 売上・在庫管理）の Firestore。
+#   8:30 は teps-2 の 8:00 全データ同期（事務所/UF在庫）の後、9:30〜12:30 は teps-2 の毎時の売上・FBA・RSL 更新の後。
 #   定刻起動: ec-dashboard の VPS（さくらのVPS）の cron が workflow_dispatch で起動する（GitHub の schedule は数時間ずれるため）。
 # 必要な Secrets: FIREBASE_SERVICE_ACCOUNT（在庫システムの鍵）のみ
 name: daily-sync
