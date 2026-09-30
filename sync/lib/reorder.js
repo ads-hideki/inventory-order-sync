@@ -38,7 +38,9 @@ export function computeProducts({ sales, office, warehouse, orders, policy }) {
     const border = pol.border ?? CONFIG.defaults.border;
     const lot = pol.lot ?? CONFIG.defaults.lot;
     const lead = pol.lead ?? 0;                      // 発注〜入庫の日数（商品ごと・settings/borders）
-    const { stock, need } = reorderQty({ ...p, ...agg, border, lot, lead });
+    const hidden = pol.hidden === true;             // 発注管理しない（画面の商品マスタで設定）
+    const { stock, need: raw } = reorderQty({ ...p, ...agg, border, lot, lead });
+    const need = hidden ? 0 : raw;
     list.push({ ...p, ...agg, border, lot, lead, stock, need, folder: (code.match(/ADS(\d{3})/i) || [])[1] || null });
   }
   return list;
