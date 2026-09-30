@@ -26,10 +26,11 @@ async function main() {
   // 事務所在庫・UF在庫を今回取り込むか（今日すでに取り込み済みで 9 時以降なら、前回の値を使う）
   const jstNow = new Date(Date.now() + 9 * 3600 * 1000);
   const today = jstNow.toISOString().slice(0, 10);
-  let meta = {}, kept = null;
+  let meta = {}, kept = null, snap = null;
   if (db) {
     meta = (await db.collection("cache").doc("meta").get()).data() || {};
-    if (!CONFIG.full && meta.stockDate === today && jstNow.getUTCHours() >= 9) kept = await fs.readStockSnapshot(db, meta);
+    snap = await fs.readSnapshotProducts(db, meta);   // 前回の商品（在庫の引き継ぎ・teps-2で削除された商品の判定に使う）
+    if (!CONFIG.full && meta.stockDate === today && jstNow.getUTCHours() >= 9) kept = fs.stockFromSnapshot(snap);
   }
   const withStock = !kept;
 
@@ -52,6 +53,9 @@ async function main() {
     let products = computeProducts({ sales, office, warehouse, orders, policy });
     products = products.filter((p) => !deleted.has(p.code));
     await writeProducts(db, products);
+    // teps-2 で削除された（teps-2 に無い）商品を自動で非表示に（画面は products.tepsDeleted を見る）
+    const gone = await fs.markTepsDeleted(db, snap, new Set(Object.keys(sales)));
+    if (gone.length) console.log(`[sync] teps-2で削除された商品を非表示に: ${gone.length}件（${gone.slice(0, 15).join(", ")}${gone.length > 15 ? " ほか" : ""}）`);
     // 毎月1日: 直近30日販売数のスナップショットを記録（発注目安の推移用）
     const now = new Date();
     //   日付は日本時間で判定する（GitHub のサーバーは UTC なので getDate() だと日本時間の2日朝になる）

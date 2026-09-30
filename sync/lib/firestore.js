@@ -27,24 +27,48 @@ export async function writeProducts(db, products) {
   for (let i = 0; i < products.length; i += 450) {
     const batch = db.batch();
     for (const p of products.slice(i, i + 450)) {
-      batch.set(db.collection("products").doc(p.code), { ...p, syncedAt: now }, { merge: true });
+      // tepsDeleted:false … teps-2 で有効な商品（削除から復活した時もここで表示に戻る）
+      batch.set(db.collection("products").doc(p.code), { ...p, tepsDeleted: false, syncedAt: now }, { merge: true });
     }
     await batch.commit();
   }
 }
 
-// 前回のまとめ文書から、事務所在庫・UF在庫を読む（2回目以降の同期で、8:30 に取り込んだ値をそのまま使うため）
-//   読み取りはまとめ文書の数（通常1〜2件）だけ。見つからなければ null（→ teps-2 から取り直す）
-export async function readStockSnapshot(db, meta) {
+// 前回のまとめ文書から商品を読む { code: data }（読み取りはまとめ文書の数＝通常1〜2件）
+//   まとめ文書が無ければ products を全件読む（初回だけ）
+export async function readSnapshotProducts(db, meta) {
   const n = (meta && meta.chunks && meta.chunks.products) || 0;
-  if (!meta || !meta.buildId || !n) return null;
-  const office = {}, warehouse = {};
-  for (let i = 0; i < n; i++) {
-    const d = await db.collection("cache").doc(`products_${meta.buildId}_${i}`).get();
-    if (!d.exists) return null;
-    for (const it of d.data().items || []) { office[it.id] = Number(it.d.office) || 0; warehouse[it.id] = Number(it.d.warehouse) || 0; }
+  const out = {};
+  if (meta && meta.buildId && n) {
+    let okAll = true;
+    for (let i = 0; i < n; i++) {
+      const d = await db.collection("cache").doc(`products_${meta.buildId}_${i}`).get();
+      if (!d.exists) { okAll = false; break; }
+      for (const it of d.data().items || []) out[it.id] = it.d;
+    }
+    if (okAll) return { items: out, fromCache: true };
   }
+  (await db.collection("products").get()).forEach((d) => { out[d.id] = d.data(); });
+  return { items: out, fromCache: false };
+}
+// 事務所在庫・UF在庫（2回目以降の同期で、8:30 に取り込んだ値をそのまま使うため）
+export function stockFromSnapshot(snap) {
+  if (!snap || !snap.fromCache) return null;
+  const office = {}, warehouse = {};
+  for (const [code, d] of Object.entries(snap.items)) { office[code] = Number(d.office) || 0; warehouse[code] = Number(d.warehouse) || 0; }
   return { office, warehouse };
+}
+// teps-2 で削除された（teps-2 に無い）商品に tepsDeleted:true を付ける（画面では自動で非表示）
+//   手動追加の商品（manual）は対象外。既に付いている商品は書かない
+export async function markTepsDeleted(db, snap, activeCodes) {
+  const codes = Object.entries(snap.items)
+    .filter(([code, d]) => !d.manual && !activeCodes.has(code) && d.tepsDeleted !== true).map(([code]) => code);
+  for (let i = 0; i < codes.length; i += 450) {
+    const batch = db.batch();
+    codes.slice(i, i + 450).forEach((c) => batch.set(db.collection("products").doc(c), { tepsDeleted: true, tepsDeletedAt: new Date() }, { merge: true }));
+    await batch.commit();
+  }
+  return codes;
 }
 
 // 画面の読み取り回数を減らすための「まとめ文書」を作る（毎回の同期の最後に1回）
