@@ -2,7 +2,7 @@
 //   起動: VPS の cron → gh-dispatch.sh rp-sync.yml（teps-2 の同期の 15 分後）
 //   1) teps-2 から「UF在庫」商品の在庫・BL・売上・UF在庫を取得 → rp_data/latest（1ドキュメントにまとめる）
 //   2) 新しい UF在庫商品を rp_data/items に追加（入数は未設定のまま → 画面で「新規」表示）
-//   3) 0 時台の回だけ、前日分の在庫を rp_channel_daily に保存
+//   3) 輸送中の入荷予定（コンテナ）を取り込み、0 時台の回だけ前日分の在庫を rp_channel_daily に保存
 //   4) 未着の照合: FBA は Amazon の入庫中数量で自動判定（着荷済みまで自動）
 //      RSL は在庫の増え方から推定し、着荷候補にするだけ（着荷済みにするのは人）
 //   ※ Firestore の無料枠（1日 5万読み取り / 2万書き込み）に収めるため、
@@ -37,9 +37,28 @@ async function main() {
   const latestRef = db.collection("rp_data").doc("latest");
   const itemsRef = db.collection("rp_data").doc("items");
 
-  // 1) 最新値（1ドキュメント）
+  // 1-a) 輸送中の入荷予定（発注管理の orders）。コンテナ（追跡不可）は eta＝お届け予定日で管理する
+  const incoming = {};
+  let incomingCount = 0;
+  try {
+    const oSnap = await db.collection("orders").where("status", "==", "transit").get();
+    for (const d of oSnap.docs) {
+      const o = d.data();
+      const code = String(o.code || "").toUpperCase();
+      const eta = String(o.eta || "").slice(0, 10);
+      const qty = Number(o.qty) || 0;
+      if (!code || !eta || qty <= 0) continue;
+      (incoming[code] ||= []).push({ qty, eta, no: o.no || "", container: o.container === true || !o.tracking });
+      incomingCount++;
+    }
+    for (const c of Object.keys(incoming)) incoming[c].sort((a, b) => a.eta.localeCompare(b.eta));
+  } catch (e) {
+    console.error("[rp] 入荷予定の取得に失敗（続行）:", e.message);
+  }
+
+  // 1-b) 最新値（1ドキュメント）
   const sorted = {}; for (const c of codes) sorted[c] = rows[c];
-  await latestRef.set({ rows: sorted, info, itemCount: codes.length, syncedAt: now });
+  await latestRef.set({ rows: sorted, incoming, info, itemCount: codes.length, syncedAt: now });
 
   // 2) 新しい商品を rp_data/items に追加（既存の入数や名前は触らない）
   const itemsDoc = await itemsRef.get();
@@ -102,7 +121,8 @@ async function main() {
   if (receivedCount) console.log(`[rp] FBA着荷（Amazon判定）: ${receivedCount}件`);
   if (candidates) console.log(`[rp] RSL着荷候補: ${candidates}件`);
 
-  console.log(`[rp] 完了 ${((Date.now() - t0) / 1000).toFixed(1)}s（読み取り ${3 + ibSnap.size}件 / 書き込み ${1 + (added.length ? 1 : 0) + writes}件）`);
+  if (incomingCount) console.log(`[rp] 入荷予定（輸送中）: ${incomingCount}件`);
+  console.log(`[rp] 完了 ${((Date.now() - t0) / 1000).toFixed(1)}s（読み取り ${3 + incomingCount + ibSnap.size}件 / 書き込み ${1 + (added.length ? 1 : 0) + writes}件）`);
 }
 
 main().catch((e) => { console.error("[rp] エラー:", e); process.exit(1); });
