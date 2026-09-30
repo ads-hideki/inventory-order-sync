@@ -48,7 +48,9 @@ async function main() {
       const eta = String(o.eta || "").slice(0, 10);
       const qty = Number(o.qty) || 0;
       if (!code || !eta || qty <= 0) continue;
-      (incoming[code] ||= []).push({ qty, eta, no: o.no || "", container: o.container === true || !o.tracking });
+      // コンテナ（追跡不可）の判定は app.js の isContainer と同じ
+      const container = o.container === true || (o.container !== false && /コンテナ/.test(o.tracking || ""));
+      (incoming[code] ||= []).push({ qty, eta, no: o.no || "", container });
       incomingCount++;
     }
     for (const c of Object.keys(incoming)) incoming[c].sort((a, b) => a.eta.localeCompare(b.eta));

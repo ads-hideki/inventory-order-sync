@@ -115,7 +115,7 @@ sync/
 やっていること
 1. teps-2 から取得 → `rp_data/latest`（1ドキュメント）に保存
 2. 新しいUF在庫商品を `rp_data/items` に追加（入数は未設定＝画面で「新規」表示）
-3. 輸送中（`orders` の status=transit）の入荷予定を集計 → `rp_data/latest.incoming`（コンテナは追跡不可なので `eta`＝お届け予定日で判断）。0 時台の回だけ、前日分の在庫を `rp_channel_daily/YYYYMMDD` に保存
+3. 輸送中（`orders` の status=transit）の入荷予定を集計 → `rp_data/latest.incoming`（コンテナは追跡不可なので `eta`＝お届け予定日で判断。コンテナの判定は `app.js` の `isContainer` と同じで、`container:true` と、旧データの追跡欄「コンテナ」表記の両方を拾う）。0 時台の回だけ、前日分の在庫を `rp_channel_daily/YYYYMMDD` に保存
 4. 未着の照合
    - **FBA**: Amazon の入庫中数量（teps-2 の `inventory/fba_*` の `inbound`）で判定。
      入庫中に現れた出荷に `amazonSeen` を立て、入庫中が減った分を古い出荷から着荷済みにする（全自動）
