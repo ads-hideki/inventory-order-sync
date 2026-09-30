@@ -5,7 +5,12 @@
 # 必要な Secrets: FIREBASE_SERVICE_ACCOUNT（在庫システムの鍵）のみ
 name: daily-sync
 on:
-  workflow_dispatch: {}      # VPS の cron / 手動実行
+  workflow_dispatch:          # VPS の cron / 手動実行
+    inputs:
+      args:
+        description: "追加の引数（例: --full … 9:30以降でも事務所在庫・UF在庫を取り直す / --dry-run）"
+        required: false
+        default: ""
 concurrency:
   group: daily-sync
   cancel-in-progress: false
@@ -24,4 +29,5 @@ jobs:
         working-directory: sync
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-        run: node sync.js
+          ARGS: ${{ github.event.inputs.args }}
+        run: node sync.js $ARGS

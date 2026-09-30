@@ -72,13 +72,14 @@ const itemsQty = (doc, lower) => {
 };
 
 // teps-2 から全データを取得し { sales, office, warehouse, info } を返す（sync.js の既存計算にそのまま渡せる形）
-export async function fetchTeps() {
+//   stock:false … 事務所在庫・UF在庫を読まない（teps-2 側は 8:00 にしか更新しないため、2回目以降の同期では不要）。office/warehouse は null
+export async function fetchTeps({ stock = true } = {}) {
   const master = await listCollection("sku_master");
   const channels = ["shopify", "rakuten1", "rakuten2", "yahoo", "qoo10", "amazon"];
   const sales = {}; const times = {};
   for (const ch of channels) { const d = await getDoc(`ec_sales/${ch}`); sales[ch] = (d && d.skus) || {}; times[ch] = d && d.updated_at; }
-  const jimusho = await getDoc("inventory/jimusho");
-  const uf = await getDoc("inventory/uf");
+  const jimusho = stock ? await getDoc("inventory/jimusho") : null;
+  const uf = stock ? await getDoc("inventory/uf") : null;
   const rsl = (await getDoc("inventory/rsl")) || (await getDoc("inventory/rakuten2"));
   const officeStock = itemsQty(jimusho), ufStock = itemsQty(uf), rslStock = itemsQty(rsl, true);
   const idx = {}; for (const ch of ["rakuten1", "rakuten2", "shopify", "yahoo", "qoo10"]) idx[ch] = upperIndex(sales[ch]);
@@ -115,7 +116,7 @@ export async function fetchTeps() {
     officeUpdated: jimusho && jimusho.updated_at, ufUpdated: uf && uf.updated_at, rslUpdated: rsl && rsl.updated_at,
     salesUpdated: times,
   };
-  return { sales: out, office, warehouse, info };
+  return { sales: out, office: stock ? office : null, warehouse: stock ? warehouse : null, info };
 }
 
 // 出荷依頼（rp_sync.js）からも使う

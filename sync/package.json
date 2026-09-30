@@ -1,7 +1,7 @@
 {
   "name": "ichigen-sync",
   "version": "0.1.0",
-  "description": "一元管理システム: スプレッドシート/倉庫CSVを読み込み、必要発注数を計算してFirestoreへ同期",
+  "description": "一元管理システム: teps-2から販売数・在庫を読み込み、必要発注数を計算してFirestoreへ同期（出荷依頼の同期も含む）",
   "type": "module",
   "engines": {
     "node": ">=20"

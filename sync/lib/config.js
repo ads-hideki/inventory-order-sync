@@ -6,4 +6,5 @@ export const CONFIG = {
 
   dryRun: process.argv.includes("--dry-run") || process.env.DRY_RUN === "1",
   snapshot: process.argv.includes("--snapshot"), // 1日以外でも月次スナップショットを強制記録
+  full: process.argv.includes("--full"),         // 9:30 以降でも事務所在庫・UF在庫を teps-2 から取り直す
 };

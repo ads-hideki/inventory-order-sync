@@ -33,7 +33,21 @@ export async function writeProducts(db, products) {
   }
 }
 
-// 画面の読み取り回数を減らすための「まとめ文書」を作る（毎朝の同期の最後に1回）
+// 前回のまとめ文書から、事務所在庫・UF在庫を読む（2回目以降の同期で、8:30 に取り込んだ値をそのまま使うため）
+//   読み取りはまとめ文書の数（通常1〜2件）だけ。見つからなければ null（→ teps-2 から取り直す）
+export async function readStockSnapshot(db, meta) {
+  const n = (meta && meta.chunks && meta.chunks.products) || 0;
+  if (!meta || !meta.buildId || !n) return null;
+  const office = {}, warehouse = {};
+  for (let i = 0; i < n; i++) {
+    const d = await db.collection("cache").doc(`products_${meta.buildId}_${i}`).get();
+    if (!d.exists) return null;
+    for (const it of d.data().items || []) { office[it.id] = Number(it.d.office) || 0; warehouse[it.id] = Number(it.d.warehouse) || 0; }
+  }
+  return { office, warehouse };
+}
+
+// 画面の読み取り回数を減らすための「まとめ文書」を作る（毎回の同期の最後に1回）
 //   cache/{kind}_{buildId}_{n} … products / orders / templates を1文書あたり約700KBまでに詰めたもの
 //   cache/meta                … builtAt（この時刻より後の変更は画面が差分で読む）・buildId・chunks・imgIndex（画像ありの型番一覧）
 //                               tomb.orders（画面で削除した発注の記録。builtAt より前のものはまとめ文書に反映済みなので整理する）
