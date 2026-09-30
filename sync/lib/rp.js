@@ -138,26 +138,56 @@ export async function fetchRpSource() {
   };
 }
 
-// ---- 未着の自動推定 ----
+// ---- 未着の自動照合（FBA）: Amazon の「入庫中」の数字で判定する ----
+// A = Amazon の入庫中数量（SP-API。inventory/fba_* の inbound の合計）
+//   ・A が未着の合計以上 → Amazon が納品を把握した ＝ amazonSeen を立てる
+//   ・その後 A が減った分 = FBA が受領した分 → 古い出荷から着荷済みにする
+//   ・Amazon がまだ把握していない出荷（納品プラン作成前）は、こちらの記録のまま残す
+export function reconcileFba(list, amazonInbound) {
+  const open = list.filter((x) => ["in_transit", "partial", "candidate"].includes(x.status))
+    .sort((a, b) => (tsOf(a.confirmedAt) || 0) - (tsOf(b.confirmedAt) || 0));
+  if (!open.length) return { seen: [], received: [] };
+  const rest = (x) => (Number(x.qty) || 0) - (Number(x.receivedQty) || 0);
+  const openTotal = open.reduce((s, x) => s + rest(x), 0);
+  const A = Number(amazonInbound) || 0;
+
+  // まだ amazonSeen が付いていない分を Amazon が把握したか
+  const seen = [];
+  if (A >= openTotal) { for (const x of open) if (!x.amazonSeen) seen.push(x._id); return { seen, received: [] }; }
+
+  // Amazon が把握済みの出荷だけを対象に、減った分を古い順で着荷にする
+  if (!open.every((x) => x.amazonSeen)) return { seen: [], received: [] };
+  let need = openTotal - A;
+  const received = [];
+  for (const x of open) {
+    if (need <= 0) break;
+    const r = rest(x);
+    if (need >= r) { received.push({ id: x._id, receivedQty: Number(x.qty) || 0, full: true }); need -= r; }
+    else { received.push({ id: x._id, receivedQty: (Number(x.receivedQty) || 0) + need, full: false }); need = 0; }
+  }
+  return { seen: [], received };
+}
+
+// ---- 未着の自動推定（RSL）----
 // 基準 = まだ着いていない出荷のうち一番古いもの（base）
 // 入庫推定数 = 今の在庫 − base 確定時の在庫 ＋ base 確定からの経過日数 × 1日あたり売上
 //             − base より前に確定し、base 確定後に着荷済みにした出荷の数量（二重に数えないため）
 // 古い出荷から順に当てはめ、残数の threshold（既定 90%）以上なら「着荷候補」
 const OPEN = new Set(["in_transit", "partial", "candidate"]);
-const ts = (v) => (v && v.toDate ? v.toDate() : v ? new Date(v) : null);
+const tsOf = (v) => (v && v.toDate ? v.toDate() : v ? new Date(v) : null);
 export function estimateArrivals(inbounds, row, channel, threshold = 0.9, now = new Date()) {
   const stock = channel === "fba" ? row.fbaStock : row.rslStock;
   const daily = (channel === "fba" ? row.amazon30 : row.rslSales30) / 30;
   const open = inbounds.filter((x) => OPEN.has(x.status))
-    .sort((a, b) => (ts(a.confirmedAt) || 0) - (ts(b.confirmedAt) || 0));
+    .sort((a, b) => (tsOf(a.confirmedAt) || 0) - (tsOf(b.confirmedAt) || 0));
   if (!open.length) return [];
   const base = open[0];
-  const baseAt = ts(base.confirmedAt) || new Date(base.shipDate + "T00:00:00+09:00");
+  const baseAt = tsOf(base.confirmedAt) || new Date(base.shipDate + "T00:00:00+09:00");
   const days = Math.max(0, (now - baseAt) / 86400000);
   let arrived = stock - (Number(base.stockAtConfirm) || 0) + daily * days;
   for (const x of inbounds) {
     if (OPEN.has(x.status) || x.status === "cancelled") continue;
-    const c = ts(x.confirmedAt), r = ts(x.receivedAt);
+    const c = tsOf(x.confirmedAt), r = tsOf(x.receivedAt);
     if (c && r && c < baseAt && r > baseAt) arrived -= Number(x.receivedQty) || 0;
   }
   const out = [];
