@@ -20,6 +20,7 @@
 | Secret | 内容 |
 |---|---|
 | `FIREBASE_SERVICE_ACCOUNT` | 在庫システム（annedansemua-inventory-order）のサービスアカウント鍵（JSONの中身） |
+| `KEEPA_FIREBASE_SERVICE_ACCOUNT` | （任意）Keepa 監視システムのサービスアカウント鍵（JSONの中身）。季節性の参考データを読むだけ。無ければ取り込まない |
 
 ※ 以前使っていた `SALES_SHEET_ID` / `OFFICE_SHEET_ID` / `WAREHOUSE_ID` / `WAREHOUSE_PASS` は使っていません（削除してOK）。
 
@@ -89,6 +90,14 @@ sync/
 
 **画面の `public/app.js` の `calc()` と同じ式にすること。**
 
+### 季節性の参考データ（Amazon の月別販売・過去24ヶ月）
+販売期間を決める時の参考として、Keepa 監視システム（別の Firebase プロジェクト）の月別販売数を 1 日 1 回取り込みます（`lib/keepa.js`）。
+- 読むのは 3 ドキュメントだけ。向こうへは書き込まない。結果は `cache/keepa` に品番（3桁）ごとにまとめて保存
+- 画面は商品マスタ・商品の編集を開いた時に 1 件読み、月別の表と「販売期間の提案」を出す
+- **発注数の計算には使わない**（提案を見て、販売期間を入れて保存するのは担当者）
+- Secret が無い・取り込みに失敗した場合もスキップするだけで、同期は止まらない
+- このリポジトリは公開なので、ASIN・ブランド名・商品名をコードやログに書かない（ログは件数だけ）
+
 ### 画面用のまとめ文書（読み取り回数の削減）
 画面は商品・発注・テンプレートを 1 件ずつ全部読むと Firestore の無料枠を超えるため、
 同期の最後に `cache/{products|orders|templates}_{buildId}_{n}`（約700KBずつ）と `cache/meta` を作ります。
@@ -106,6 +115,7 @@ node sync.js               # 本番書き込み（sync/serviceAccount.json を�
 node sync.js --full        # 9:30 以降でも事務所在庫・UF在庫を teps-2 から取り直す
 node sync.js --cache-only  # まとめ文書だけ作り直す（画面の表示がおかしい時）
 node sync.js --snapshot    # 1日でなくても販売推移を記録する
+node sync.js --keepa       # 今日取り込み済みでも、季節性の参考データを取り込み直す（ローカルは KEEPA_SA_PATH=鍵ファイルの場所）
 ```
 
 ### Firestore の使用量（目安・2026-09-30 実測）

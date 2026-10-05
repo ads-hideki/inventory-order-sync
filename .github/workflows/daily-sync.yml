@@ -2,7 +2,8 @@
 #   データ取得元: teps-2（EC 売上・在庫管理）の Firestore。
 #   8:30 は teps-2 の 8:00 全データ同期（事務所/UF在庫）の後、9:30〜12:30 は teps-2 の毎時の売上・FBA・RSL 更新の後。
 #   定刻起動: ec-dashboard の VPS（さくらのVPS）の cron が workflow_dispatch で起動する（GitHub の schedule は数時間ずれるため）。
-# 必要な Secrets: FIREBASE_SERVICE_ACCOUNT（在庫システムの鍵）のみ
+# 必要な Secrets: FIREBASE_SERVICE_ACCOUNT（在庫システムの鍵）
+# 任意の Secrets: KEEPA_FIREBASE_SERVICE_ACCOUNT（Keepa 監視システムの鍵。季節性の参考データを 1 日 1 回読む。無ければ取り込まないだけ）
 name: daily-sync
 on:
   workflow_dispatch:          # VPS の cron / 手動実行
@@ -29,5 +30,6 @@ jobs:
         working-directory: sync
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          KEEPA_FIREBASE_SERVICE_ACCOUNT: ${{ secrets.KEEPA_FIREBASE_SERVICE_ACCOUNT }}
           ARGS: ${{ github.event.inputs.args }}
         run: node sync.js $ARGS

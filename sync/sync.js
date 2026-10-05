@@ -77,7 +77,16 @@ async function main() {
     const summary = `商品${products.length}件・要発注${need}品目・倉庫: ${whInfo}`;
     await db.collection("settings").doc("system").set({ updatedAt: now, lastSyncSummary: summary }, { merge: true });
     // 画面用のまとめ文書（読み取り回数削減）。最後に作るので、ここまでの書き込みがすべて入る
-    const cb = await buildCache(db, { lastSyncSummary: summary, ...(withStock ? { stockDate: today, stockAt: now } : {}) });
+    // 季節性の参考データ（Amazon の月別販売・24ヶ月）を 1 日 1 回取り込む。失敗しても同期は続ける
+    let keepaDone = false;
+    if (CONFIG.keepa || meta.keepaDate !== today) {
+      try {
+        const { buildKeepaSeason } = await import("./lib/keepa.js");
+        const k = await buildKeepaSeason(db, meta);
+        if (k) { keepaDone = true; console.log(`[sync] 季節性の参考データ  品番${k.folders}系統（数字あり${k.withData}・競合あり${k.withComps}）`); }
+      } catch (e) { console.error("[sync] 季節性の参考データの取り込みに失敗（スキップ）:", e.message); }
+    }
+    const cb = await buildCache(db, { lastSyncSummary: summary, ...(withStock ? { stockDate: today, stockAt: now } : {}), ...(keepaDone ? { keepaDate: today } : {}) });
     console.log(`[sync] まとめ文書  ${JSON.stringify(cb)}`);
     console.log(`[sync] 完了  商品${products.length}件 書込 / 要発注${need}品目 / 削除除外${deleted.size}件 / ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   } else {
