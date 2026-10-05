@@ -8,6 +8,7 @@ export const CONFIG = {
     earlyMargin: 1.0,     // 生産中が無い品番は「ボーダー＋この月数」を切ったら発注（次の入荷予定が無いので早めに）
     momentumRatio: 1.5,   // 後半15日が前半15日のこの倍率以上なら、需要を「後半15日×2」で計算（バズ・発売直後の急伸）
     momentumMin: 15,      // 勢い補正をかける最低販売数（後半15日）。少量販売のぶれを拾わないため
+    seasonPreMonths: 3,   // 季節商品: 販売開始の何ヶ月前から発注対象にするか
   },
 
   dryRun: process.argv.includes("--dry-run") || process.env.DRY_RUN === "1",

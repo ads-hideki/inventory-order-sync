@@ -126,6 +126,12 @@ export async function readOrders(db) {
   return snap.docs.map((d) => d.data());
 }
 
+// 月次販売数（季節商品の昨シーズン実績の計算用）{ "YYYY-MM": { 商品コード: 販売数 } }
+export async function readSalesHistory(db) {
+  const o = {}; (await db.collection("salesHistory").get()).forEach((d) => { o[d.id] = d.data().data || {}; });
+  return o;
+}
+
 // 発注ポリシー（ボーダー・ロット）読み込み
 export async function readPolicy(db) {
   const doc = await db.collection("settings").doc("borders").get();

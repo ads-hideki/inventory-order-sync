@@ -50,7 +50,9 @@ async function main() {
     orders = await readOrders(db);
     policy = await readPolicy(db);
     const deleted = new Set(await readDeleted(db));   // 画面で削除された商品は復活させない
-    let products = computeProducts({ sales, office, warehouse, orders, policy });
+    // 季節商品があれば、昨シーズン実績の計算用に月次販売数を読む（無ければ読まない）
+    const hist = Object.values(policy).some((v) => v && v.seasonOn) ? await fs.readSalesHistory(db) : {};
+    let products = computeProducts({ sales, office, warehouse, orders, policy, hist, month: jstNow.getUTCMonth() + 1 });
     products = products.filter((p) => !deleted.has(p.code));
     await writeProducts(db, products);
     // teps-2 で削除された（teps-2 に無い）商品を自動で非表示に（画面は products.tepsDeleted を見る）
