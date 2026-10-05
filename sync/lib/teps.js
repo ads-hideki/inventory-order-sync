@@ -55,14 +55,14 @@ function findSales(obj, key) {
 }
 // 現行SKU＋旧SKUを合算（alias_of で同じ集計に2度当たったら1回だけ）
 function mergeSales(obj, idx, keys) {
-  const out = { qty: 0, hit: false }; if (!obj) return out;
+  const out = { qty: 0, f: 0, l: 0, hit: false }; if (!obj) return out;   // f/l = 前半15日・後半15日
   const seen = new Set();
   for (const key of keys) {
     const k = String(key || "").trim(); if (!k) continue;
     const real = obj[k] ? k : idx[k.toUpperCase()]; if (!real) continue;
     const d = obj[real] || {}; const primary = d.alias_of || real;
     if (seen.has(primary)) continue; seen.add(primary);
-    out.hit = true; out.qty += d.qty || 0;
+    out.hit = true; out.qty += d.qty || 0; out.f += d.qty_first15 || 0; out.l += d.qty_last15 || 0;
   }
   return out;
 }
@@ -91,21 +91,25 @@ export async function fetchTeps({ stock = true } = {}) {
     const code = sku.toUpperCase(); if (!isCode(code)) continue;
     const amazonSku = str(data.amazon_sku);
     const r1key = str(data.rakuten1_sku) || sku, r2key = str(data.rakuten2_sku) || sku;
-    const r1 = mergeSales(sales.rakuten1, idx.rakuten1, [r1key, str(data.rakuten1_sku_old)]).qty;
-    const r2 = mergeSales(sales.rakuten2, idx.rakuten2, [r2key, str(data.rakuten2_sku_old)]).qty;
-    const shop = mergeSales(sales.shopify, idx.shopify, [str(data.shopify_sku) || amazonSku, str(data.shopify_sku_old)]).qty;
-    const yahoo = mergeSales(sales.yahoo, idx.yahoo, [str(data.yahoo_sku) || amazonSku, str(data.yahoo_sku_old)]).qty;
+    const r1m = mergeSales(sales.rakuten1, idx.rakuten1, [r1key, str(data.rakuten1_sku_old)]);
+    const r2m = mergeSales(sales.rakuten2, idx.rakuten2, [r2key, str(data.rakuten2_sku_old)]);
+    const shopm = mergeSales(sales.shopify, idx.shopify, [str(data.shopify_sku) || amazonSku, str(data.shopify_sku_old)]);
+    const yahoom = mergeSales(sales.yahoo, idx.yahoo, [str(data.yahoo_sku) || amazonSku, str(data.yahoo_sku_old)]);
+    const r1 = r1m.qty, r2 = r2m.qty, shop = shopm.qty, yahoo = yahoom.qty;
     const q10m = mergeSales(sales.qoo10, idx.qoo10, [str(data.qoo10_sku) || amazonSku]);
     const q10 = q10m.hit ? q10m.qty : findSales(sales.qoo10, sku);
     let amz = null;
     if (amazonSku) { amz = sales.amazon[amazonSku] || (Object.entries(sales.amazon).find(([k]) => k.toUpperCase() === amazonSku.toUpperCase()) || [])[1] || null; }
     const amazon30 = (amz && amz.qty) || data.amazon30 || 0;
     const total30 = r1 + r2 + q10 + yahoo + shop + amazon30;
+    // 前半15日・後半15日（全モール合計）。発注数の「勢い補正」に使う
+    const first15 = r1m.f + r2m.f + shopm.f + yahoom.f + q10m.f + ((amz && amz.qty_first15) || 0);
+    const last15 = r1m.l + r2m.l + shopm.l + yahoom.l + q10m.l + ((amz && amz.qty_last15) || 0);
     const rslQty = rslStock[r1key.toLowerCase()] ?? rslStock[r2key.toLowerCase()] ?? (data.rsl_stock || 0);
 
     out[code] = {
       code, name: str(data.name), vari: str(data.variant),
-      monthly: total30, fba: Number(data.fba_stock) || 0, rsl: Number(rslQty) || 0,
+      monthly: total30, first15, last15, fba: Number(data.fba_stock) || 0, rsl: Number(rslQty) || 0,
       office: 0, warehouse: 0,
     };
     office[code] = officeStock[code] || 0;
