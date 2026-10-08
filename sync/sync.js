@@ -58,16 +58,19 @@ async function main() {
     // teps-2 で削除された（teps-2 に無い）商品を自動で非表示に（画面は products.tepsDeleted を見る）
     const gone = await fs.markTepsDeleted(db, snap, new Set(Object.keys(sales)));
     if (gone.length) console.log(`[sync] teps-2で削除された商品を非表示に: ${gone.length}件（${gone.slice(0, 15).join(", ")}${gone.length > 15 ? " ほか" : ""}）`);
-    // 毎月1日: 直近30日販売数のスナップショットを記録（発注目安の推移用）
+    // 毎月1日: 直近30日販売数のスナップショットを salesHistory/YYYY-MM に記録（発注目安の推移用）
+    //   YYYY-MM は「販売した月」。1日の直近30日販売＝前月の販売なので、前月のラベルで記録する
+    //   （--snapshot で月の途中に記録する時は、15日までは前月・16日以降は当月のラベル）
     const now = new Date();
     //   日付は日本時間で判定する（GitHub のサーバーは UTC なので getDate() だと日本時間の2日朝になる）
     //   1日5回動くので、その月の記録がまだ無い時（＝1日の最初の回 8:30）だけ書く
     const jst = new Date(now.getTime() + 9 * 3600 * 1000);
-    const month = `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, "0")}`;
+    const lm = new Date(Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth() - (jst.getUTCDate() <= 15 ? 1 : 0), 1));
+    const month = `${lm.getUTCFullYear()}-${String(lm.getUTCMonth() + 1).padStart(2, "0")}`;
     if ((jst.getUTCDate() === 1 && !(await db.collection("salesHistory").doc(month).get()).exists) || CONFIG.snapshot) {
       const data = {}; products.forEach((p) => { data[p.code] = p.monthly; });
       await db.collection("salesHistory").doc(month).set({ month, recordedAt: now, data });
-      console.log(`[sync] 月次スナップショット記録: ${month}（${Object.keys(data).length}商品）`);
+      console.log(`[sync] 月次スナップショット記録: ${month} の販売数として記録（${Object.keys(data).length}商品）`);
     }
     // 古い履歴・完了発注を整理（約1年より前）
     const cu = await cleanupOld(db);
