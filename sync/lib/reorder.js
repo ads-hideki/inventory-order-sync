@@ -50,12 +50,12 @@ export function seasonBaseOf(hist, code, from, to) {
 //                 発注点 = ボーダー（生産中がある品番）／ ボーダー＋1ヶ月（生産中が無い品番。次の入荷予定が無いので早めに）
 //   いくつ発注か … 入庫までの間も売れるので「ボーダー＋リードタイム」分まで積む。ロット単位で四捨五入（最低1ロット）
 //   （2026-10-01 の実発注との比較: 発注した品番の一致 36/62 → 49/62）
-//   季節商品   … シーズン外は発注しない。シーズン前は「見込み月販（無ければ昨シーズンの平均月販）」を需要に使う
+//   季節商品   … シーズン外は発注しない。シーズン前は「見込み月販（無ければ昨シーズンの平均月販）」を需要に使う（仕入れ基準販売数があればそちら）
 export function reorderQty({ monthly, first15, last15, baseSales, office, warehouse, fba, rsl, transit, prod, border, lot, lead, phase, seasonBase, seasonForecast }) {
   const stock = office + warehouse + fba + rsl;
   const total = stock + transit + prod;
   const actual = demandOf({ monthly, first15, last15, baseSales });
-  const preBase = phase === "pre" ? (seasonForecast > 0 ? seasonForecast : (seasonBase || 0)) : 0;
+  const preBase = phase === "pre" && !(baseSales > 0) ? (seasonForecast > 0 ? seasonForecast : (seasonBase || 0)) : 0;   // 仕入れ基準販売数があればそれを優先
   const demand = Math.max(actual, preBase);
   const point = border + (prod <= 0 ? CONFIG.rule.earlyMargin : 0);
   const trigger = phase !== "off" && demand > 0 && total < demand * point;
