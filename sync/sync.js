@@ -89,7 +89,16 @@ async function main() {
         if (k) { keepaDone = true; console.log(`[sync] 季節性の参考データ  品番${k.folders}系統（数字あり${k.withData}・競合あり${k.withComps}）`); }
       } catch (e) { console.error("[sync] 季節性の参考データの取り込みに失敗（スキップ）:", e.message); }
     }
-    const cb = await buildCache(db, { lastSyncSummary: summary, ...(withStock ? { stockDate: today, stockAt: now } : {}), ...(keepaDone ? { keepaDate: today } : {}) });
+    // 為替レート（三菱UFJ銀行 リアルタイム相場の TTS）を 1 日 1 回（その日の最初の回）取り込む。失敗しても同期は続ける（前回の値が残る）
+    let fxDone = false;
+    if (CONFIG.fx || meta.fxDate !== today) {
+      try {
+        const { updateFx } = await import("./lib/fx.js");
+        const r = await updateFx(db); fxDone = true;
+        console.log(`[sync] 為替レート  1元=${r.RMB}円 / 1USD=${r.USD}円（三菱UFJ TTS ${r.asOf}）`);
+      } catch (e) { console.error("[sync] 為替レートの取り込みに失敗（スキップ・前回の値のまま）:", e.message); }
+    }
+    const cb = await buildCache(db, { lastSyncSummary: summary, ...(withStock ? { stockDate: today, stockAt: now } : {}), ...(keepaDone ? { keepaDate: today } : {}), ...(fxDone ? { fxDate: today } : {}) });
     console.log(`[sync] まとめ文書  ${JSON.stringify(cb)}`);
     console.log(`[sync] 完了  商品${products.length}件 書込 / 要発注${need}品目 / 削除除外${deleted.size}件 / ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   } else {
