@@ -18,6 +18,15 @@ async function main() {
     console.log(`[sync] まとめ文書を作成  ${JSON.stringify(r)}`);
     return;
   }
+  // 為替レートだけ取り込む（毎朝 9:00 の fx-sync.yml 用）: node sync.js --fx-only
+  //   三菱UFJ銀行 リアルタイム相場の TTS（USD・CNY）→ settings/fx。発注履歴の円換算に使う。失敗したら前回の値のまま
+  if (process.argv.includes("--fx-only")) {
+    const { initFirestore } = await import("./lib/firestore.js");
+    const { updateFx } = await import("./lib/fx.js");
+    const r = await updateFx(initFirestore());
+    console.log(`[fx] 為替レート  1元=${r.RMB}円 / 1USD=${r.USD}円（三菱UFJ TTS ${r.asOf}）`);
+    return;
+  }
   console.log(`[sync] 開始  dryRun=${CONFIG.dryRun}`);
   const fs = CONFIG.dryRun ? null : await import("./lib/firestore.js");
   const db = fs ? fs.initFirestore() : null;
@@ -89,17 +98,7 @@ async function main() {
         if (k) { keepaDone = true; console.log(`[sync] 季節性の参考データ  品番${k.folders}系統（数字あり${k.withData}・競合あり${k.withComps}）`); }
       } catch (e) { console.error("[sync] 季節性の参考データの取り込みに失敗（スキップ）:", e.message); }
     }
-    // 為替レート（三菱UFJ銀行 リアルタイム相場の TTS）を毎回取り込む（8:30〜12:30 の各回。発注は午前中なので、その日のレートに追いつくように）
-    //   失敗しても同期は続ける（前回の値が残る）。書き込みは 1 件だけ
-    let fxDone = false;
-    {
-      try {
-        const { updateFx } = await import("./lib/fx.js");
-        const r = await updateFx(db); fxDone = true;
-        console.log(`[sync] 為替レート  1元=${r.RMB}円 / 1USD=${r.USD}円（三菱UFJ TTS ${r.asOf}）`);
-      } catch (e) { console.error("[sync] 為替レートの取り込みに失敗（スキップ・前回の値のまま）:", e.message); }
-    }
-    const cb = await buildCache(db, { lastSyncSummary: summary, ...(withStock ? { stockDate: today, stockAt: now } : {}), ...(keepaDone ? { keepaDate: today } : {}), ...(fxDone ? { fxDate: today } : {}) });
+    const cb = await buildCache(db, { lastSyncSummary: summary, ...(withStock ? { stockDate: today, stockAt: now } : {}), ...(keepaDone ? { keepaDate: today } : {}) });
     console.log(`[sync] まとめ文書  ${JSON.stringify(cb)}`);
     console.log(`[sync] 完了  商品${products.length}件 書込 / 要発注${need}品目 / 削除除外${deleted.size}件 / ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   } else {

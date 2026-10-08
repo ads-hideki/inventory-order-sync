@@ -62,10 +62,13 @@ sync/
    `YYYY-MM` は「販売した月」＝前月のラベル（10月1日の記録は `2026-09`）
 6. 約1年（400日）より前の操作ログ・完了した発注を削除
 7. その日の最初の回だけ、季節性の参考データ（Amazon の月別販売）を `cache/keepa` に取り込む（下の「季節性の参考データ」）
-8. 毎回、為替レート（三菱UFJ銀行 リアルタイム相場の **TTS**。USD と CNY）を `settings/fx` に取り込む（`lib/fx.js`。発注履歴の円換算用）。
-   データは https://www.bk.mufg.jp/gdocs/rate/kinri_data_utf8.js ＝ https://www.bk.mufg.jp/ippan/rate/real.html が読んでいるもの（日中は約10分おきに更新）。
-   毎回取るのは、発注が午前中なので 9:30・10:30 の回でその日のレートに追いつくため。8:30 の回は前営業日の最終レートになる
-9. `settings/system`（最終同期）と、画面用の**まとめ文書** `cache/*` を作り直す
+8. `settings/system`（最終同期）と、画面用の**まとめ文書** `cache/*` を作り直す
+
+### fx-sync（為替レート・毎朝 9:00 に 1 回）
+`fx-sync.yml` が `node sync.js --fx-only` を実行し、三菱UFJ銀行 リアルタイム相場の **TTS**（USD と CNY）を `settings/fx` に書く（`lib/fx.js`。発注履歴の円換算用）。
+- データは https://www.bk.mufg.jp/gdocs/rate/kinri_data_utf8.js ＝ https://www.bk.mufg.jp/ippan/rate/real.html が読んでいるもの（日中は約10分おきに更新）
+- 起動は VPS の cron `0 9 * * *`（ec-dashboard の `docs/vps/crontab.txt`）。土日・祝日は前営業日の最終レートになる
+- 失敗した日は前回の値のまま（画面の発注履歴に取得日時が出る）
 
 ### 必要発注数
 ```
@@ -116,6 +119,7 @@ sync/
 
 ### 引数（ローカル実行・GitHub の手動実行の両方で使える）
 ```bash
+node sync.js --fx-only     # 為替レート（三菱UFJ TTS）だけ取り込む（fx-sync.yml が毎朝 9:00 に実行）
 cd sync && npm install
 node sync.js --dry-run     # 書き込まず計算だけ（Firebase鍵不要）
 node sync.js               # 本番書き込み（sync/serviceAccount.json を使用）

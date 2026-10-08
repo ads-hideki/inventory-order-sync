@@ -1,0 +1,25 @@
+# 為替レートの取り込み（毎朝 9:00 JST に 1 回。三菱UFJ銀行 リアルタイム相場の TTS → settings/fx）
+#   発注履歴の円換算に使う。定刻起動は ec-dashboard の VPS の cron（gh-dispatch.sh fx-sync.yml ads-hideki/inventory-order-sync）
+# 必要な Secrets: FIREBASE_SERVICE_ACCOUNT（在庫システムの鍵）
+name: fx-sync
+on:
+  workflow_dispatch:          # VPS の cron / 手動実行
+concurrency:
+  group: fx-sync
+  cancel-in-progress: false
+jobs:
+  fx:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: install
+        working-directory: sync
+        run: npm ci || npm install
+      - name: fetch fx rate
+        working-directory: sync
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: node sync.js --fx-only
