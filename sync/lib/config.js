@@ -14,6 +14,5 @@ export const CONFIG = {
   dryRun: process.argv.includes("--dry-run") || process.env.DRY_RUN === "1",
   snapshot: process.argv.includes("--snapshot"), // 1日以外でも月次スナップショットを強制記録
   keepa: process.argv.includes("--keepa"),
-  fx: process.argv.includes("--fx"),             // 今日すでに取り込み済みでも、為替レート（三菱UFJ TTS）を取り込み直す       // 今日すでに取り込み済みでも、季節性の参考データ（Keepa）を取り込み直す
   full: process.argv.includes("--full"),         // 9:30 以降でも事務所在庫・UF在庫を teps-2 から取り直す
 };

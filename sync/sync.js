@@ -89,9 +89,10 @@ async function main() {
         if (k) { keepaDone = true; console.log(`[sync] 季節性の参考データ  品番${k.folders}系統（数字あり${k.withData}・競合あり${k.withComps}）`); }
       } catch (e) { console.error("[sync] 季節性の参考データの取り込みに失敗（スキップ）:", e.message); }
     }
-    // 為替レート（三菱UFJ銀行 リアルタイム相場の TTS）を 1 日 1 回（その日の最初の回）取り込む。失敗しても同期は続ける（前回の値が残る）
+    // 為替レート（三菱UFJ銀行 リアルタイム相場の TTS）を毎回取り込む（8:30〜12:30 の各回。発注は午前中なので、その日のレートに追いつくように）
+    //   失敗しても同期は続ける（前回の値が残る）。書き込みは 1 件だけ
     let fxDone = false;
-    if (CONFIG.fx || meta.fxDate !== today) {
+    {
       try {
         const { updateFx } = await import("./lib/fx.js");
         const r = await updateFx(db); fxDone = true;

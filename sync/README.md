@@ -62,9 +62,10 @@ sync/
    `YYYY-MM` は「販売した月」＝前月のラベル（10月1日の記録は `2026-09`）
 6. 約1年（400日）より前の操作ログ・完了した発注を削除
 7. その日の最初の回だけ、季節性の参考データ（Amazon の月別販売）を `cache/keepa` に取り込む（下の「季節性の参考データ」）
-   と、為替レート（三菱UFJ銀行 リアルタイム相場の **TTS**。USD と CNY）を `settings/fx` に取り込む（`lib/fx.js`。発注履歴の円換算用。
-   データは https://www.bk.mufg.jp/gdocs/rate/kinri_data_utf8.js ＝ https://www.bk.mufg.jp/ippan/rate/real.html が読んでいるもの。8:30 時点の値なので前営業日の最終レート）
-8. `settings/system`（最終同期）と、画面用の**まとめ文書** `cache/*` を作り直す
+8. 毎回、為替レート（三菱UFJ銀行 リアルタイム相場の **TTS**。USD と CNY）を `settings/fx` に取り込む（`lib/fx.js`。発注履歴の円換算用）。
+   データは https://www.bk.mufg.jp/gdocs/rate/kinri_data_utf8.js ＝ https://www.bk.mufg.jp/ippan/rate/real.html が読んでいるもの（日中は約10分おきに更新）。
+   毎回取るのは、発注が午前中なので 9:30・10:30 の回でその日のレートに追いつくため。8:30 の回は前営業日の最終レートになる
+9. `settings/system`（最終同期）と、画面用の**まとめ文書** `cache/*` を作り直す
 
 ### 必要発注数
 ```
@@ -122,7 +123,6 @@ node sync.js --full        # 9:30 以降でも事務所在庫・UF在庫を teps
 node sync.js --cache-only  # まとめ文書だけ作り直す（画面の表示がおかしい時）
 node sync.js --snapshot    # 1日でなくても販売推移を記録する（15日までは前月・16日以降は当月のラベル）
 node sync.js --keepa       # 今日取り込み済みでも、季節性の参考データを取り込み直す（ローカルは KEEPA_SA_PATH=鍵ファイルの場所）
-node sync.js --fx          # 今日取り込み済みでも、為替レート（三菱UFJ TTS）を取り込み直す
 ```
 
 ### Firestore の使用量（目安・2026-09-30 実測）
