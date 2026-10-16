@@ -49,7 +49,7 @@ export function seasonBaseOf(hist, code, from, to) {
 //   ボーダー    … 商品マスタのボーダー（ヶ月）は「リードタイム60日のとき」の値（例: 3ヶ月＝LT2ヶ月＋入荷時に1ヶ月残る）。
 //                 LTが違う商品は差の分を加減: 実効ボーダー = ボーダー + (LT − 60)/30（LT75日→＋0.5ヶ月。LT未設定は60日扱い）
 //   発注するか  … 引当合計（在庫＋輸送中＋生産中）が 需要×実効ボーダー を下回ったら
-//   いくつ発注か … 需要×実効ボーダー まで積む（入荷時にボーダーの残り分が残る）。ロット単位で四捨五入（最低1ロット）
+//   いくつ発注か … ①ボーダーまでの不足分（需要×実効ボーダー − 引当合計）＋ ②需要×2ヶ月分（coverMonths）→ ③ロット単位で四捨五入（最低1ロット）
 //   （2026-10-15: 以前の「ボーダー＋LT分まで積む」「生産中なしは＋1ヶ月早め」は余剰になるため廃止）
 //   季節商品   … シーズン外は発注しない。シーズン前は「見込み月販（無ければ昨シーズンの平均月販）」を需要に使う（仕入れ基準販売数があればそちら）
 // 実効ボーダー（ヶ月）。小数2桁に丸める（0.1ヶ月未満の端数で発注が揺れないように）
@@ -65,7 +65,7 @@ export function reorderQty({ monthly, first15, last15, baseSales, office, wareho
   const demand = Math.max(actual, preBase);
   const point = effBorder(border, lead);
   const trigger = phase !== "off" && demand > 0 && total < demand * point;
-  const raw = trigger ? demand * point - total : 0;
+  const raw = trigger ? (demand * point - total) + demand * CONFIG.rule.coverMonths : 0;
   const need = raw > 0 ? Math.max(1, Math.round(raw / lot)) * lot : 0;
   return { stock, total, need, demand, point };
 }
