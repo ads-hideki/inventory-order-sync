@@ -50,6 +50,7 @@ export function seasonBaseOf(hist, code, from, to) {
 //                 LTが違う商品は差の分を加減: 実効ボーダー = ボーダー + (LT − 60)/30（LT75日→＋0.5ヶ月。LT未設定は60日扱い）
 //   発注するか  … 引当合計（在庫＋輸送中＋生産中）が 需要×実効ボーダー を下回ったら
 //   いくつ発注か … ①ボーダーまでの不足分（需要×実効ボーダー − 引当合計）＋ ②需要×2ヶ月分（coverMonths）→ ③ロット単位で四捨五入（最低1ロット）
+//                 最低ロット（minQty）があれば、その数（ロットの倍数に切り上げ）以上にする（例: 最低1000・ロット100 → 600なら1000、1100なら1100）
 //   （2026-10-15: 以前の「ボーダー＋LT分まで積む」「生産中なしは＋1ヶ月早め」は余剰になるため廃止）
 //   季節商品   … シーズン外は発注しない。シーズン前は「見込み月販（無ければ昨シーズンの平均月販）」を需要に使う（仕入れ基準販売数があればそちら）
 // 実効ボーダー（ヶ月）。小数2桁に丸める（0.1ヶ月未満の端数で発注が揺れないように）
@@ -57,7 +58,7 @@ export function effBorder(border, lead) {
   const d = lead > 0 ? (lead - CONFIG.rule.leadBase) / 30 : 0;
   return Math.round((border + d) * 100) / 100;
 }
-export function reorderQty({ monthly, first15, last15, baseSales, office, warehouse, fba, rsl, transit, prod, border, lot, lead, phase, seasonBase, seasonForecast }) {
+export function reorderQty({ monthly, first15, last15, baseSales, office, warehouse, fba, rsl, transit, prod, border, lot, minQty, lead, phase, seasonBase, seasonForecast }) {
   const stock = office + warehouse + fba + rsl;
   const total = stock + transit + prod;
   const actual = demandOf({ monthly, first15, last15, baseSales });
@@ -66,7 +67,8 @@ export function reorderQty({ monthly, first15, last15, baseSales, office, wareho
   const point = effBorder(border, lead);
   const trigger = phase !== "off" && demand > 0 && total < demand * point;
   const raw = trigger ? (demand * point - total) + demand * CONFIG.rule.coverMonths : 0;
-  const need = raw > 0 ? Math.max(1, Math.round(raw / lot)) * lot : 0;
+  const minL = minQty > 0 ? Math.ceil(minQty / lot) * lot : 0;    // 最低ロット（ロットの倍数に切り上げ）
+  const need = raw > 0 ? Math.max(minL, Math.max(1, Math.round(raw / lot)) * lot) : 0;
   return { stock, total, need, demand, point };
 }
 
@@ -84,14 +86,15 @@ export function computeProducts({ sales, office, warehouse, orders, policy, hist
     const pol = (policy && policy[code]) || {};
     const border = pol.border ?? CONFIG.defaults.border;
     const lot = pol.lot ?? CONFIG.defaults.lot;
+    const minQty = +pol.minQty > 0 ? +pol.minQty : 0;   // 最低ロット（0=なし）
     const lead = pol.lead ?? 0;                      // 発注〜入庫の日数（商品ごと・settings/borders）
     const hidden = pol.hidden === true;             // 発注管理しない（画面の商品マスタで設定）
     const baseSales = +pol.baseSales > 0 ? +pol.baseSales : 0;   // 仕入れ基準販売数（あれば直近30日販売の代わりに使う）
     const phase = seasonPhase(pol, mNow);            // 季節商品の状態（通年商品は null）
     const seasonBase = pol.seasonOn ? seasonBaseOf(hist, code, +pol.seasonFrom, +pol.seasonTo) : 0;
-    const { stock, need: raw, demand, point } = reorderQty({ ...p, ...agg, baseSales, border, lot, lead, phase, seasonBase, seasonForecast: +pol.seasonForecast || 0 });
+    const { stock, need: raw, demand, point } = reorderQty({ ...p, ...agg, baseSales, border, lot, minQty, lead, phase, seasonBase, seasonForecast: +pol.seasonForecast || 0 });
     const need = hidden ? 0 : raw;
-    list.push({ ...p, ...agg, border, lot, lead, baseSales, stock, need, demand, point, seasonPhase: phase, seasonBase, folder: (code.match(/ADS(\d{3})/i) || [])[1] || null });
+    list.push({ ...p, ...agg, border, lot, minQty, lead, baseSales, stock, need, demand, point, seasonPhase: phase, seasonBase, folder: (code.match(/ADS(\d{3})/i) || [])[1] || null });
   }
   return list;
 }
