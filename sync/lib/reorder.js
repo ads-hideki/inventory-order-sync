@@ -48,7 +48,7 @@ export function seasonBaseOf(hist, code, from, to) {
 // 必要発注数（画面の calc() と同じ式にすること）
 //   ボーダー    … 商品マスタのボーダー（ヶ月）そのまま（基準: 3ヶ月・LT60日）。リードタイムは発注点・発注数に加味しない（参考表示のみ。2026-10-19 櫻井さんの指示）
 //                 ※ CONFIG.rule.leadAdjust=true にすると旧方式（実効ボーダー = ボーダー + (LT − 60)/30）に戻る
-//   発注するか  … 引当合計（在庫＋輸送中＋生産中）が 需要×ボーダー を下回ったら
+//   発注するか  … 在庫月数（引当合計÷需要を小数1桁に四捨五入。画面の表示と同じ）がボーダーを下回ったら（3.0ヶ月はセーフ、2.9ヶ月は発注。2026-10-19）
 //   いくつ発注か … ①ボーダーまでの不足分（需要×実効ボーダー − 引当合計）＋ ②需要×2ヶ月分（coverMonths）→ ③ロット単位で四捨五入（最低1ロット）
 //                 最低ロット（minQty）があれば、その数（ロットの倍数に切り上げ）以上にする（例: 最低1000・ロット100 → 600なら1000、1100なら1100）
 //   （2026-10-15: 以前の「ボーダー＋LT分まで積む」「生産中なしは＋1ヶ月早め」は余剰になるため廃止）
@@ -65,7 +65,8 @@ export function reorderQty({ monthly, first15, last15, baseSales, office, wareho
   const preBase = phase === "pre" && !(baseSales > 0) ? (seasonForecast > 0 ? seasonForecast : (seasonBase || 0)) : 0;   // 仕入れ基準販売数があればそれを優先
   const demand = Math.max(actual, preBase);
   const point = CONFIG.rule.leadAdjust ? effBorder(border, lead) : border;
-  const trigger = phase !== "off" && demand > 0 && total < demand * point;
+  const months = demand > 0 ? Math.round(total / demand * 10) / 10 : 99;   // 在庫月数（小数1桁）
+  const trigger = phase !== "off" && demand > 0 && months < point;
   const raw = trigger ? (demand * point - total) + demand * CONFIG.rule.coverMonths : 0;
   const minL = minQty > 0 ? Math.ceil(minQty / lot) * lot : 0;    // 最低ロット（ロットの倍数に切り上げ）
   const need = raw > 0 ? Math.max(minL, Math.max(1, Math.round(raw / lot)) * lot) : 0;
