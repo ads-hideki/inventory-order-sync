@@ -5,7 +5,8 @@ export const CONFIG = {
   defaults: { border: 2.0, lot: 100 },
   // 発注ロジックの係数（画面 public/app.js の ORDER_RULE と同じ値にすること）
   rule: {
-    leadBase: 60,         // ボーダー（ヶ月）はリードタイムがこの日数のときの値。違う商品は (lead − leadBase)/30 ヶ月を加減する
+    leadAdjust: false,    // true: 実効ボーダー = ボーダー + (lead − leadBase)/30（2026-10-15〜19 の方式）。false: ボーダーのみ。LT は参考表示（2026-10-19〜）
+    leadBase: 60,         // leadAdjust=true のときの基準日数
     coverMonths: 2,       // 発注数 = ボーダーまでの不足分 + 需要×この月数（次の発注までに売れる分）
     momentumRatio: 1.5,   // 後半15日が前半15日のこの倍率以上なら、需要を「後半15日×2」で計算（バズ・発売直後の急伸）
     momentumMin: 15,      // 勢い補正をかける最低販売数（後半15日）。少量販売のぶれを拾わないため
