@@ -37,3 +37,4 @@ firestore.indexes.json
 .firebaserc
 /README.md
 sync/data/
+storage.rules
