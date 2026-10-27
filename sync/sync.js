@@ -89,6 +89,14 @@ async function main() {
     const summary = `商品${products.length}件・要発注${need}品目・倉庫: ${whInfo}`;
     await db.collection("settings").doc("system").set({ updatedAt: now, lastSyncSummary: summary }, { merge: true });
     // 画面用のまとめ文書（読み取り回数削減）。最後に作るので、ここまでの書き込みがすべて入る
+    // 全体欠品の日数: その日の最初の回（事務所・UF在庫を取り込んだ回）に、型番ごとの在庫を stockDaily に記録し、直近180日の欠品日数を cache/stockout にまとめる
+    if (withStock) {
+      try {
+        const { recordStockDaily, buildStockout } = await import("./lib/stockout.js");
+        const n = await recordStockDaily(db, products, today); const so = await buildStockout(db, today);
+        console.log(`[sync] 欠品日数  本日の在庫を記録（${n}件）／直近${so.counted}日分を集計（うち概算${so.approxDays}日・欠品のある型番${so.codes}件・古い記録の削除${so.pruned}件）`);
+      } catch (e) { console.error("[sync] 欠品日数の集計に失敗（スキップ）:", e.message); }
+    }
     // 季節性の参考データ（Amazon の月別販売・24ヶ月）を 1 日 1 回取り込む。失敗しても同期は続ける
     let keepaDone = false;
     if (CONFIG.keepa || meta.keepaDate !== today) {

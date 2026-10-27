@@ -109,7 +109,7 @@ export async function buildCache(db, extra = {}) {
 
   // 前回までのまとめ文書を削除（画面が読み替える時間を見て、今回と前回の2世代は残す）
   const keep = new Set([buildId, String(oldMeta.buildId || "")]);
-  const old = (await db.collection("cache").select("buildId").get()).docs.filter((d) => d.id !== "meta" && d.id !== "keepa" && !keep.has(String((d.data() || {}).buildId)));   // cache/keepa（季節性の参考データ）は消さない
+  const old = (await db.collection("cache").select("buildId").get()).docs.filter((d) => d.id !== "meta" && d.id !== "keepa" && d.id !== "stockout" && !keep.has(String((d.data() || {}).buildId)));   // cache/keepa（季節性の参考データ）・cache/stockout（欠品日数）は消さない
   for (const d of old) await d.ref.delete();
   // まとめ文書に反映済みの削除記録を整理（念のため5分の余裕を見る）
   const tomb = ((oldMeta.tomb || {}).orders) || {};
