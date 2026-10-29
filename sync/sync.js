@@ -77,8 +77,8 @@ async function main() {
     const lm = new Date(Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth() - (jst.getUTCDate() <= 15 ? 1 : 0), 1));
     const month = `${lm.getUTCFullYear()}-${String(lm.getUTCMonth() + 1).padStart(2, "0")}`;
     if ((jst.getUTCDate() === 1 && !(await db.collection("salesHistory").doc(month).get()).exists) || CONFIG.snapshot) {
-      const data = {}; products.forEach((p) => { data[p.code] = p.monthly; });
-      await db.collection("salesHistory").doc(month).set({ month, recordedAt: now, data });
+      const data = {}, base = {}; products.forEach((p) => { data[p.code] = p.monthly; if (p.baseSales > 0) base[p.code] = p.baseSales; });
+      await db.collection("salesHistory").doc(month).set({ month, recordedAt: now, data, base });   // base = その時点の仕入れ基準販売数（記録用）
       console.log(`[sync] 月次スナップショット記録: ${month} の販売数として記録（${Object.keys(data).length}商品）`);
     }
     // 古い履歴・完了発注を整理（約1年より前）
