@@ -88,7 +88,7 @@ export function computeProducts({ sales, office, warehouse, orders, policy, hist
     const border = pol.border ?? CONFIG.defaults.border;
     const lot = pol.lot ?? CONFIG.defaults.lot;
     const minQty = +pol.minQty > 0 ? +pol.minQty : 0;   // 最低ロット（0=なし）
-    const lead = pol.lead ?? 0;                      // 発注〜入庫の日数（商品ごと・settings/borders）
+    const lead = pol.lead ?? CONFIG.defaults.lead;   // 発注〜入庫の日数（商品ごと・settings/borders。未設定は60日）
     const hidden = pol.hidden === true;             // 発注管理しない（画面の商品マスタで設定）
     const baseSales = +pol.baseSales > 0 ? +pol.baseSales : 0;   // 仕入れ基準販売数（あれば直近30日販売の代わりに使う）
     const phase = seasonPhase(pol, mNow);            // 季節商品の状態（通年商品は null）

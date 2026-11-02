@@ -2,7 +2,7 @@
 //   販売数・在庫はすべて teps-2（lib/teps.js）から取得する。スプレッドシート・倉庫システムへのログインは使わない。
 export const CONFIG = {
   // 発注ポリシー既定値
-  defaults: { border: 2.0, lot: 100 },
+  defaults: { border: 3, lot: 100, lead: 60 },   // 商品マスタに設定が無い新商品の初期値（基準: ボーダー3ヶ月・LT60日。2026-11-02 に 2.0→3）
   // 発注ロジックの係数（画面 public/app.js の ORDER_RULE と同じ値にすること）
   rule: {
     leadAdjust: false,    // true: 実効ボーダー = ボーダー + (lead − leadBase)/30（2026-10-15〜19 の方式）。false: ボーダーのみ。LT は参考表示（2026-10-19〜）
