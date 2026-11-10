@@ -24,8 +24,12 @@ export async function buildStockout(db, today, days = STOCKOUT_DAYS) {
   const from = addDays(today, -(days - 1));
   const own = await db.collection("stockDaily").where(FieldPath.documentId(), ">=", from).get();
   const ownDates = own.docs.map((d) => d.id).sort(); const firstOwn = ownDates[0] || null;
-  const zero = {}, last = {}; let counted = 0;
-  const count = (date, totals) => { counted++; for (const [code, t] of Object.entries(totals)) { if (t === 0) { zero[code] = (zero[code] || 0) + 1; if (!last[code] || date > last[code]) last[code] = date; } } };
+  const zero = {}, last = {}, zero30 = {}; let counted = 0, counted30 = 0;
+  const from30 = addDays(today, -29);   // 直近30日の内数（画面で「欠品14日（直近30日で4日）」と出す）
+  const count = (date, totals) => {
+    counted++; const recent = date >= from30; if (recent) counted30++;
+    for (const [code, t] of Object.entries(totals)) { if (t === 0) { zero[code] = (zero[code] || 0) + 1; if (recent) zero30[code] = (zero30[code] || 0) + 1; if (!last[code] || date > last[code]) last[code] = date; } }
+  };
   own.forEach((d) => { const data = d.data().data || {}; const m = {}; for (const c of Object.keys(data)) m[c] = (data[c] || []).reduce((a, b) => a + (+b || 0), 0); count(d.id, m); });
   // 自前の記録より前は rp_channel_daily（FBA/RSL/UF のみ）
   let approxDays = 0;
@@ -37,8 +41,8 @@ export async function buildStockout(db, today, days = STOCKOUT_DAYS) {
     for (const c of Object.keys(data)) { const x = data[c] || {}; m[c] = (+x.uf || 0) + (+x.fba || 0) + (+x.rsl || 0); }
     count(date, m); approxDays++;
   });
-  const items = {}; for (const c of Object.keys(zero)) items[c] = { z: zero[c], last: last[c] };
-  await db.collection("cache").doc("stockout").set({ updatedAt: new Date(), days, from, counted, approxDays, firstOwn, items });
+  const items = {}; for (const c of Object.keys(zero)) items[c] = { z: zero[c], last: last[c], z30: zero30[c] || 0 };
+  await db.collection("cache").doc("stockout").set({ updatedAt: new Date(), days, from, counted, counted30, approxDays, firstOwn, items });
   // 古い stockDaily は消す（約1年より前）
   const old = await db.collection("stockDaily").where(FieldPath.documentId(), "<", addDays(today, -KEEP_DAYS)).get();
   for (const d of old.docs) await d.ref.delete();
