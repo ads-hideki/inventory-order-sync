@@ -1,4 +1,4 @@
-# 為替レートの取り込み（毎朝 9:00 JST に 1 回。三菱UFJ銀行 リアルタイム相場の TTS → settings/fx）
+# 為替レートの取り込み（毎朝 9:00 JST に 1 回。三菱UFJ銀行 リアルタイム相場の TTM（TTS と TTB の中間値）→ settings/fx）
 #   発注履歴の円換算に使う。定刻起動は ec-dashboard の VPS の cron（gh-dispatch.sh fx-sync.yml ads-hideki/inventory-order-sync）
 # 必要な Secrets: FIREBASE_SERVICE_ACCOUNT（在庫システムの鍵）
 name: fx-sync

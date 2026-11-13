@@ -19,12 +19,12 @@ async function main() {
     return;
   }
   // 為替レートだけ取り込む（毎朝 9:00 の fx-sync.yml 用）: node sync.js --fx-only
-  //   三菱UFJ銀行 リアルタイム相場の TTS（USD・CNY）→ settings/fx。発注履歴の円換算に使う。失敗したら前回の値のまま
+  //   三菱UFJ銀行 リアルタイム相場の TTM（TTS と TTB の中間値。USD・CNY）→ settings/fx。発注履歴の円換算に使う。失敗したら前回の値のまま
   if (process.argv.includes("--fx-only")) {
     const { initFirestore } = await import("./lib/firestore.js");
     const { updateFx } = await import("./lib/fx.js");
     const r = await updateFx(initFirestore());
-    console.log(`[fx] 為替レート  1元=${r.RMB}円 / 1USD=${r.USD}円（三菱UFJ TTS ${r.asOf}）`);
+    console.log(`[fx] 為替レート  1元=${r.RMB}円 / 1USD=${r.USD}円（三菱UFJ TTM ${r.asOf}）`);
     return;
   }
   console.log(`[sync] 開始  dryRun=${CONFIG.dryRun}`);
