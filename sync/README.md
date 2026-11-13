@@ -63,10 +63,12 @@ sync/
 6. 約1年（400日）より前の操作ログ・完了した発注を削除
 7. その日の最初の回だけ、季節性の参考データ（Amazon の月別販売）を `cache/keepa` に取り込む（下の「季節性の参考データ」）。
    同じ回で、型番ごとの在庫（事務所・UF・FBA・RSL）を `stockDaily/{日付}` に記録し、直近180日の**全体欠品日数**（合計が0だった日数）を `cache/stockout` にまとめる（`lib/stockout.js`。自前の記録より前は `rp_channel_daily` で概算）
-8. `settings/system`（最終同期）と、画面用の**まとめ文書** `cache/*` を作り直す
+   同じ回で、**在庫計算書**を Google スプレッドシートへ書き出す（`lib/zaiko_sheet.js`。設定は Firestore `settings/zaikoSheet`。シート ID はリポジトリに書かない。書き出すだけで、シートの内容は読み戻さない。`--zaiko-sheet` で今すぐ）
+8. 毎月1日の最初の回だけ、**月末棚卸表**の元データ（前月末の在庫・単価・為替レート）を `inventoryBook/YYYY-MM` に記録する（`lib/inventory_book.js`。12ヶ月保管。`--inventory-book=YYYY-MM` で取り直し）
+9. `settings/system`（最終同期）と、画面用の**まとめ文書** `cache/*` を作り直す
 
 ### fx-sync（為替レート・毎朝 9:00 に 1 回）
-`fx-sync.yml` が `node sync.js --fx-only` を実行し、三菱UFJ銀行 リアルタイム相場の **TTS**（USD と CNY）を `settings/fx` に書く（`lib/fx.js`。発注履歴の円換算用）。
+`fx-sync.yml` が `node sync.js --fx-only` を実行し、三菱UFJ銀行 リアルタイム相場の **TTM（TTS と TTB の中間値。2026-11-13 に TTS から変更）**（USD と CNY）を `settings/fx` に書く（`lib/fx.js`。発注履歴の円換算・在庫計算書・月末棚卸表に使う）。
 - データは https://www.bk.mufg.jp/gdocs/rate/kinri_data_utf8.js ＝ https://www.bk.mufg.jp/ippan/rate/real.html が読んでいるもの（日中は約10分おきに更新）
 - 起動は VPS の cron `0 9 * * *`（ec-dashboard の `docs/vps/crontab.txt`）。土日・祝日は前営業日の最終レートになる
 - 失敗した日は前回の値のまま（画面の発注履歴に取得日時が出る）
