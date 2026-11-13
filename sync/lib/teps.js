@@ -85,7 +85,7 @@ export async function fetchTeps({ stock = true } = {}) {
   const idx = {}; for (const ch of ["rakuten1", "rakuten2", "shopify", "yahoo", "qoo10"]) idx[ch] = upperIndex(sales[ch]);
   const str = (v) => (v == null ? "" : String(v)).trim();
 
-  const out = {}, office = {}, warehouse = {}, malls = {};   // malls = モール別の30日販売数（在庫計算書の書き出し用）
+  const out = {}, office = {}, warehouse = {}, malls = {}, groups = {};   // groups = teps-2 のグループ（UF在庫／事務所在庫／その他在庫。月末棚卸表の区分用）   malls = モール別の30日販売数（在庫計算書の書き出し用）
   for (const [sku, data] of Object.entries(master)) {
     if (data.deleted) continue;
     const code = sku.toUpperCase(); if (!isCode(code)) continue;
@@ -112,7 +112,7 @@ export async function fetchTeps({ stock = true } = {}) {
       monthly: total30, first15, last15, fba: Number(data.fba_stock) || 0, rsl: Number(rslQty) || 0,
       office: 0, warehouse: 0,
     };
-    malls[code] = [amazon30, r1, r2, yahoo];
+    malls[code] = [amazon30, r1, r2, yahoo]; groups[code] = str(data.group) || "UF在庫";
     office[code] = officeStock[code] || 0;
     warehouse[code] = ufStock[code] || 0;
   }
@@ -121,7 +121,7 @@ export async function fetchTeps({ stock = true } = {}) {
     officeUpdated: jimusho && jimusho.updated_at, ufUpdated: uf && uf.updated_at, rslUpdated: rsl && rsl.updated_at,
     salesUpdated: times,
   };
-  return { sales: out, office: stock ? office : null, warehouse: stock ? warehouse : null, info, malls };
+  return { sales: out, office: stock ? office : null, warehouse: stock ? warehouse : null, info, malls, groups };
 }
 
 // 出荷依頼（rp_sync.js）からも使う

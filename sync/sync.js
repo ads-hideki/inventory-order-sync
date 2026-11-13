@@ -97,6 +97,13 @@ async function main() {
         console.log(`[sync] 欠品日数  本日の在庫を記録（${n}件）／直近${so.counted}日分を集計（うち概算${so.approxDays}日・欠品のある型番${so.codes}件・古い記録の削除${so.pruned}件）`);
       } catch (e) { console.error("[sync] 欠品日数の集計に失敗（スキップ）:", e.message); }
     }
+    // 月末棚卸表（会計資料）の元データ: 毎月 1 日の最初の回に、前月末の棚卸として inventoryBook/YYYY-MM に記録（--inventory-book=YYYY-MM で取り直し）。失敗しても同期は続ける
+    try {
+      const force = (process.argv.find((a) => a.startsWith("--inventory-book=")) || "").split("=")[1] || "";
+      const { recordInventoryBook } = await import("./lib/inventory_book.js");
+      const ib = await recordInventoryBook(db, { products, groups: t.groups, policy, snap, jst, force });
+      if (ib) console.log(`[sync] 月末棚卸表  ${ib.month} として記録（${ib.rows}件・うち事務所${ib.office}件・古い月の削除${ib.pruned}件）`);
+    } catch (e) { console.error("[sync] 月末棚卸表の記録に失敗（スキップ）:", e.message); }
     // 在庫計算書（Google スプレッドシート）へ 1 日 1 回書き出す（その日の最初の回。--zaiko-sheet で今すぐ）。書き出すだけで、シートの内容は読み戻さない。失敗しても同期は続ける
     if (withStock || process.argv.includes("--zaiko-sheet")) {
       try {
