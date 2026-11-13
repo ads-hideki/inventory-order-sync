@@ -42,7 +42,7 @@ export async function writeZaikoSheet(db, { products, malls, policy, snap, today
   const price = {}, cur = {}, sup = {};
   (await db.collection("templates").get()).forEach((d) => {
     const t = d.data(); cur[d.id] = t.cur || ""; sup[d.id] = t.sup || "";
-    for (const it of t.items || []) if (it && it.code) price[it.code] = Number(it.price) || 0;
+    for (const it of t.items || []) if (it && it.code && Number(it.price) > 0 && (d.id === (it.code.match(/ADS(\d{3})/i) || [])[1] || !price[it.code])) price[it.code] = Number(it.price);   // 自分の品番のテンプレートの単価を優先
   });
   const fx = (await db.collection("settings").doc("fx").get()).data() || {};
 

@@ -5,10 +5,11 @@
 //   ・載せる商品 = 画面に出している商品＋手動追加の商品＋非表示でも在庫か輸送中がある商品。
 //     settings/inventoryBook.excludeFolders（既定 ["060"]＝組み合わせ商品）の品番は載せない
 //   ・区分 = teps-2 の商品マスタのグループ。「UF在庫」は上段、それ以外（事務所在庫・その他在庫）は下段「事務所」
-//   ・在庫 = FBA / RSL / UF / 事務所 / 輸送中（生産中は含めない）。
-//     単価・通貨 = settings/inventoryBook.prices（棚卸用の単価 {商品コード: {p, cur}}。2026年10月末の棚卸表から取り込み）を優先し、無い商品は発注テンプレートの単価（備考に出す）。
-//     発注テンプレートの単価はセット商品の部材単価だったり未登録だったりして、棚卸の単価とは一致しないため
-//    レート = settings/fx（毎朝 9:00 の TTM。1 日 8:30 時点では月末日の朝の値）
+//   ・在庫 = FBA / RSL / UF / 事務所 / 輸送中（生産中は含めない）。レート = settings/fx（毎朝 9:00 の TTM。1 日 8:30 時点では月末日の朝の値）
+//   ・棚卸単価 = システムの単価（その商品の品番の発注テンプレートの単価）。
+//       同じ型番が 2 つ以上のテンプレートに違う単価で登録されている商品（二重登録）は、商品マスタで選んだテンプレート（settings/borders[code].invTpl = 品番3桁）の単価。
+//       未選択なら自分の品番のテンプレート（備考に「単価が2件登録」と出す）
+//       システムに単価が無い商品は settings/inventoryBook.prices（2026年10月末の棚卸表の単価）で補い、備考に出す。それも無ければ「単価未登録」
 //   ・取り直し: node sync.js --inventory-book=YYYY-MM（その時点の在庫で上書きする。1 日の同期が失敗した時だけ使う）
 const KEEP_MONTHS = 12;
 const DEFAULT_EXCLUDE = ["060"];
@@ -25,16 +26,24 @@ export async function recordInventoryBook(db, { products, groups, policy, snap, 
   if (!force && (jst.getUTCDate() !== 1 || (await ref.get()).exists)) return null;   // 1 日の最初の回だけ
 
   const cfg = (await db.collection("settings").doc("inventoryBook").get()).data() || {};
+  const n = (v) => Number(v) || 0;
   const acc = cfg.prices || {};
   const exclude = new Set(Array.isArray(cfg.excludeFolders) ? cfg.excludeFolders : DEFAULT_EXCLUDE);
-  const price = {}, cur = {};
+  const cand = {}, cur = {};   // cand = {型番: [{f: テンプレートの品番, p: 単価}]}
   (await db.collection("templates").get()).forEach((d) => {
     const t = d.data(); cur[d.id] = t.cur || "";
-    for (const it of t.items || []) if (it && it.code) price[it.code] = Number(it.price) || 0;
+    for (const it of t.items || []) if (it && it.code && Number(it.price) > 0) (cand[it.code] = cand[it.code] || []).push({ f: d.id, p: Number(it.price) });
   });
+  // 棚卸単価を決める
+  const priceOf = (c, f) => {
+    const cs = cand[c] || [], dup = new Set(cs.map((x) => x.p)).size > 1, sel = (policy[c] && policy[c].invTpl) || "";
+    const hit = cs.find((x) => x.f === sel) || cs.find((x) => x.f === f) || cs[0];
+    if (hit) return { p: hit.p, cur: cur[hit.f] || "", b: dup ? (cs.some((x) => x.f === sel) ? `単価は品番${hit.f}のテンプレート（商品マスタで選択）` : "単価が2件登録（商品マスタで未選択）") : "" };
+    const a = acc[c] && n(acc[c].p) > 0 ? acc[c] : null;
+    return a ? { p: n(a.p), cur: a.cur || "", b: "システムに単価なし（10月末の棚卸表の単価）" } : { p: 0, cur: "", b: "単価未登録" };
+  };
   const fx = (await db.collection("settings").doc("fx").get()).data() || {};
 
-  const n = (v) => Number(v) || 0;
   const list = products.map((p) => ({ ...p }));
   const have = new Set(list.map((p) => p.code));
   for (const [code, d] of Object.entries((snap && snap.items) || {})) if (d && d.manual && !have.has(code)) list.push({ ...d, code });
@@ -44,9 +53,9 @@ export async function recordInventoryBook(db, { products, groups, policy, snap, 
     if (!f || exclude.has(f)) continue;
     const qty = n(p.fba) + n(p.rsl) + n(p.warehouse) + n(p.office) + n(p.transit);
     if (policy[c] && policy[c].hidden === true && qty === 0) continue;   // 非表示で在庫も無い商品は載せない
-    const a = acc[c] && n(acc[c].p) > 0 ? acc[c] : null, pr = a ? n(a.p) : price[c] || 0;
+    const pr = priceOf(c, f);
     rows.push({ c, n: p.name || "", v: p.vari || "", fba: n(p.fba), rsl: n(p.rsl), uf: n(p.warehouse), of: n(p.office), tr: n(p.transit),
-      p: pr, cur: a ? a.cur || "" : pr ? cur[f] || "" : "", b: a ? "" : pr ? "単価は発注テンプレート" : "単価未登録", s: (groups && groups[c] ? groups[c] : "UF在庫") === "UF在庫" ? 0 : 1 });
+      p: pr.p, cur: pr.cur, b: pr.b, s: (groups && groups[c] ? groups[c] : "UF在庫") === "UF在庫" ? 0 : 1 });
   }
   rows.sort((a, b) => a.s - b.s || (a.c < b.c ? -1 : 1));
   const [y, m] = month.split("-").map(Number);
