@@ -7,8 +7,8 @@
 //   ・区分 = teps-2 の商品マスタのグループ。「UF在庫」は上段、それ以外（事務所在庫・その他在庫）は下段「事務所」
 //   ・在庫 = FBA / RSL / UF / 事務所 / 輸送中（生産中は含めない）。レート = settings/fx（毎朝 9:00 の TTM。1 日 8:30 時点では月末日の朝の値）
 //   ・棚卸単価 = システムの単価（その商品の品番の発注テンプレートの単価）。
-//       同じ型番が 2 つ以上のテンプレートに違う単価で登録されている商品（二重登録）は、商品マスタで選んだテンプレート（settings/borders[code].invTpl = 品番3桁）の単価。
-//       未選択なら自分の品番のテンプレート（備考に「単価が2件登録」と出す）
+//       違う単価が 2 つ以上登録されている商品（二重登録。別の品番のテンプレートにも載っている／発注書のひな形が複数あって単価が違う）は、
+//       商品マスタで選んだ単価（settings/borders[code].invTpl = 品番3桁、または po:品番:ひな形のキー）。未選択なら自分の品番のテンプレート（備考に出す）
 //       システムに単価が無い商品は settings/inventoryBook.prices（2026年10月末の棚卸表の単価）で補い、備考に出す。それも無ければ「単価未登録」
 //   ・取り直し: node sync.js --inventory-book=YYYY-MM（その時点の在庫で上書きする。1 日の同期が失敗した時だけ使う）
 const KEEP_MONTHS = 12;
@@ -29,16 +29,20 @@ export async function recordInventoryBook(db, { products, groups, policy, snap, 
   const n = (v) => Number(v) || 0;
   const acc = cfg.prices || {};
   const exclude = new Set(Array.isArray(cfg.excludeFolders) ? cfg.excludeFolders : DEFAULT_EXCLUDE);
-  const cand = {}, cur = {};   // cand = {型番: [{f: テンプレートの品番, p: 単価}]}
-  (await db.collection("templates").get()).forEach((d) => {
-    const t = d.data(); cur[d.id] = t.cur || "";
-    for (const it of t.items || []) if (it && it.code && Number(it.price) > 0) (cand[it.code] = cand[it.code] || []).push({ f: d.id, p: Number(it.price) });
-  });
-  // 棚卸単価を決める
+  // 単価の候補 {型番: [{id, p, cur}]}: 発注テンプレートの単価（id = 品番3桁）＋ 発注書のひな形ごとの単価（id = po:品番:キー。通貨はひな形の見出し）
+  const cand = {};
+  const tdocs = (await db.collection("templates").get()).docs.sort((a, b) => (a.id < b.id ? -1 : 1));
+  for (const d of tdocs) {
+    const t = d.data(), add = (c, x) => (cand[c] = cand[c] || []).push(x);
+    for (const it of t.items || []) if (it && it.code && Number(it.price) > 0) add(it.code, { id: d.id, p: Number(it.price), cur: t.cur || "" });
+    const pos = Array.isArray(t.poTpls) && t.poTpls.length ? t.poTpls : t.poTpl && t.poTpl.name ? [{ key: "", ...t.poTpl }] : [];
+    for (const x of pos) for (const [c, p] of Object.entries(x.prices || {})) if (Number(p) > 0) add(c, { id: `po:${d.id}:${x.key || ""}`, p: Number(p), cur: x.cur || t.cur || "" });
+  }
+  // 棚卸単価を決める: 商品マスタで選んだもの → 自分の品番のテンプレート → 最初の候補 → 10月末の棚卸表 → 未登録
   const priceOf = (c, f) => {
-    const cs = cand[c] || [], dup = new Set(cs.map((x) => x.p)).size > 1, sel = (policy[c] && policy[c].invTpl) || "";
-    const hit = cs.find((x) => x.f === sel) || cs.find((x) => x.f === f) || cs[0];
-    if (hit) return { p: hit.p, cur: cur[hit.f] || "", b: dup ? (cs.some((x) => x.f === sel) ? `単価は品番${hit.f}のテンプレート（商品マスタで選択）` : "単価が2件登録（商品マスタで未選択）") : "" };
+    const cs = cand[c] || [], dup = new Set(cs.map((x) => x.p + "|" + x.cur)).size > 1, sel = (policy[c] && policy[c].invTpl) || "";
+    const picked = cs.find((x) => x.id === sel), hit = picked || cs.find((x) => x.id === f) || cs[0];
+    if (hit) return { p: hit.p, cur: hit.cur, b: dup ? (picked ? "単価は商品マスタで選択" : "単価が複数登録（商品マスタで未選択）") : "" };
     const a = acc[c] && n(acc[c].p) > 0 ? acc[c] : null;
     return a ? { p: n(a.p), cur: a.cur || "", b: "システムに単価なし（10月末の棚卸表の単価）" } : { p: 0, cur: "", b: "単価未登録" };
   };
