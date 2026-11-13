@@ -97,6 +97,14 @@ async function main() {
         console.log(`[sync] 欠品日数  本日の在庫を記録（${n}件）／直近${so.counted}日分を集計（うち概算${so.approxDays}日・欠品のある型番${so.codes}件・古い記録の削除${so.pruned}件）`);
       } catch (e) { console.error("[sync] 欠品日数の集計に失敗（スキップ）:", e.message); }
     }
+    // 在庫計算書（Google スプレッドシート）へ 1 日 1 回書き出す（その日の最初の回。--zaiko-sheet で今すぐ）。書き出すだけで、シートの内容は読み戻さない。失敗しても同期は続ける
+    if (withStock || process.argv.includes("--zaiko-sheet")) {
+      try {
+        const { writeZaikoSheet } = await import("./lib/zaiko_sheet.js");
+        const z = await writeZaikoSheet(db, { products, malls: t.malls, policy, snap, today });
+        if (z) console.log(`[sync] 在庫計算書  ${z.rows}件を書き出し（手入力を残した型番${z.kept}件${z.created ? "・タブを新規作成" : ""}）`);
+      } catch (e) { console.error("[sync] 在庫計算書の書き出しに失敗（スキップ）:", e.message); }
+    }
     // 季節性の参考データ（Amazon の月別販売・24ヶ月）を 1 日 1 回取り込む。失敗しても同期は続ける
     let keepaDone = false;
     if (CONFIG.keepa || meta.keepaDate !== today) {
