@@ -11,7 +11,8 @@ const JP = "ぁ-んァ-ヶ一-龠";
 // Chatwork の本文から、引用・宛先・添付の記法を取り除く（引用は二重計上になるので中身ごと捨てる）
 export function cleanBody(body) {
   let s = String(body || ""), prev;
-  do { prev = s; s = s.replace(/\[qt\](?:(?!\[qt\])[\s\S])*?\[\/qt\]/g, "\n"); } while (s !== prev);
+  // 引用は捨てる。ただし「【001 リクルートバッグ 追加発注】」の見出しだけは残す（返信の「納期：25日間」がどの品番かを知るため）
+  do { prev = s; s = s.replace(/\[qt\]((?:(?!\[qt\])[\s\S])*?)\[\/qt\]/g, (_, inner) => "\n" + (inner.match(/【[^】]{0,40}】/g) || []).join("\n") + "\n"); } while (s !== prev);
   s = s.replace(/\[download:[^\]]*\][\s\S]*?\[\/download\]/g, " ")
     .replace(/\[(?:To|rp|qtmeta|piconname|picon|toall)[^\]]*\]/gi, " ")
     .replace(/\[\/?(?:info|title|code|hr|dtext[^\]]*|preview[^\]]*)\]/gi, "\n")
@@ -92,10 +93,14 @@ export function findProducts(line, index) {
 export function parseMessage(msg, index) {
   const msgDate = new Date(msg.time * 1000 + 9 * 3600000).toISOString().slice(0, 10);
   const lines = cleanBody(msg.body).split(/\n/).map((s) => s.trim()).filter(Boolean);
-  const events = [], unknown = []; let pending = [], orphan = null;   // orphan = 「○○発注分 △△」とあるが品番が分からなかった行（次の行の状態と合わせて未判定に出す）
+  const events = [], unknown = [], leads = []; let pending = [], orphan = null, head = "";   // orphan = 「○○発注分 △△」とあるが品番が分からなかった行（次の行の状態と合わせて未判定に出す）
   const mk = (p, od, stage, line, date) => ({ folder: p.folder, code: p.code, how: p.how, orderDate: od, stage, date, qty: p.qty || 0,
     boxes: 0, cbm: 0, perBox: 0, msgId: String(msg.id), time: msg.time, who: msg.who || "", text: line.slice(0, 200) });
   for (const raw of lines) {
+    // 納期の回答（「【001 リクルートバッグ 追加発注】」→「納期：25日間ぐらい」「納期：30日-35日間」）
+    const hm = raw.match(/【\s*(?:ADS)?(\d{3})/i); if (hm && index.folders.has(hm[1])) head = hm[1];
+    const lm = raw.match(/納期\s*[:：]?\s*(\d{1,3})\s*(?:日)?(?:間)?\s*(?:[-~〜～]\s*(\d{1,3}))?\s*日/);
+    if (lm && head) { leads.push({ folder: head, days: Math.max(+lm[1], +(lm[2] || 0)), date: msgDate, msgId: String(msg.id), time: msg.time, text: raw.slice(0, 100) }); continue; }
     const od = takeOrderDate(raw, msgDate), line = od.rest, stage = findStage(line);
     const boxInfo = /\d\s*箱/.test(line) || /CBM/i.test(line);
     const looksCode = new RegExp(`(?<!\\d)\\d{3}(?!\\d)[A-Z]?[_ ]?[${JP}]|ADS\\s?\\d{3}`, "i").test(line);
@@ -126,7 +131,7 @@ export function parseMessage(msg, index) {
   const body = lines.join("\n"), pb = body.match(/1\s*箱\s*(?:あたり)?\s*(\d+)\s*個\s*入/), sz = body.match(/箱サイズ\s*(\d+(?:\.\d+)?)\s*[*×xX]\s*(\d+(?:\.\d+)?)\s*[*×xX]\s*(\d+(?:\.\d+)?)\s*cm/i);
   const fs = [...new Set(events.map((e) => e.folder))];
   if (fs.length === 1 && (pb || sz)) for (const e of events) { if (pb) e.perBox = +pb[1]; if (sz) e.boxCbm = Math.round(sz[1] * sz[2] * sz[3] / 1000) / 1000; }
-  return { events, unknown };
+  return { events, unknown, leads };
 }
 
 // 生産中の発注を「発注日｜品番3桁」のロットにまとめる。orders = [{id, d}]（status=production のもの）

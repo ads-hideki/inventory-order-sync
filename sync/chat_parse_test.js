@@ -92,4 +92,13 @@ const ct = costTable([C("ADS002-M", "17 ", "22 ", "", "70 "), C("ADS002-L", "20"
 assert.deepEqual(ct["002"], { cont20: 0, cont40: 17, lcl: 22, ocs: 0, perBox: 60 }); assert.equal(ct["007"].ocs, 127);
 const rec2 = recommend(lots["2026-10-01|090"], products, { lclDays: 20, containerDays: 40 }, 120, { cont40: 10, lcl: 30, ocs: 0 });
 assert.match(rec2.detail, /OCS料金未登録/); assert.match(rec2.detail, /混載 ブラック 120個.*コンテナ比 \+¥2,400/);
-console.log("OK: 判定の確認 9件");
+
+// 10) 納期の回答（引用の見出しから品番を取る）
+r = parseMessage(msg(`[To:1]Kato さん
+[qt][qtmeta aid=1 time=1]ちょうさん
+【035 キャッシュレス財布 追加発注】
+・納期の目安を教えてください。[/qt]
+前金：41.6元*400個＝4992元
+納期：30日-35日間ぐらい`), index);
+assert.deepEqual(r.leads.map((l) => [l.folder, l.days]), [["035", 35]]); assert.equal(r.events.length, 0);
+console.log("OK: 判定の確認 10件");
