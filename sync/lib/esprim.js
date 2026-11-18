@@ -170,33 +170,41 @@ export function resolveLot(ev, lots) {
 // 輸送手段の推奨（エスプリムに現物があるロットだけ）
 //   cfg = {lclDays, containerDays}（混載便・コンテナで国内に入庫するまでの日数。出荷待ちを含む）
 //   cost = {cont40, lcl, ocs}（1個あたりの国際送料・円。原価シートの L〜N 列。無ければ料金は出さない）
-//   型番ごとに「（国内在庫＋輸送中）÷ 1日の販売」で何日もつかを出し、
-//   混載便でも間に合わない分 → OCS ／ コンテナだと間に合わない分 → 混載便 ／ それ以外 → コンテナ
-export function recommend(lot, products, cfg, perBox, cost) {
-  const rows = []; let worst = 0;
+//   groups = {商品コード: teps-2 のグループ}（「事務所在庫」の商品はコンテナを使わない＝混載便か OCS。「UF在庫」などは全パターン）
+//   OCS の行き先はいつも事務所。型番ごとに「（国内在庫＋輸送中）÷ 1日の販売」で何日もつかを出し、
+//     UF在庫:   混載便でも間に合わない分 → OCS（事務所宛） ／ コンテナだと間に合わない分 → 混載便 ／ それ以外 → コンテナ
+//     事務所在庫: 混載便でも間に合わない分 → OCS（事務所宛） ／ 残りは全部 → 混載便（事務所宛）
+export function recommend(lot, products, cfg, perBox, cost, groups = {}) {
+  const rows = []; let worst = 0, offices = 0, items = 0;
+  const yen = (n) => "¥" + n.toLocaleString("ja-JP");
   for (const it of lot.items) {
     const p = products[it.code]; if (!p) continue;
+    const office = groups[it.code] === "事務所在庫"; items++; if (office) offices++;
     const stock = ["office", "warehouse", "fba", "rsl"].reduce((s, k) => s + (Number(p[k]) || 0), 0), transit = Number(p.transit) || 0;
-    const daily = (Number(p.demand) || Number(p.monthly) || 0) / 30; if (daily <= 0) continue;
-    const days = (stock + transit) / daily; let mode = 0, until = 0;
-    if (days < cfg.lclDays) { mode = 2; until = cfg.lclDays; } else if (days < cfg.containerDays) { mode = 1; until = cfg.containerDays; }
-    if (!mode) continue;
-    let qty = Math.ceil(daily * (until - days)); if (perBox > 0) qty = Math.ceil(qty / perBox) * perBox;
-    qty = Math.min(qty, it.remain); if (qty <= 0) continue;
-    // コンテナ（40ft）で送る場合との差額
-    const unit = cost ? (mode === 2 ? cost.ocs : cost.lcl) : 0, base = cost ? cost.cont40 || cost.lcl : 0;
-    const extra = unit > 0 && base > 0 ? Math.round((unit - base) * qty) : null;
-    rows.push({ code: it.code, vari: it.vari, mode, qty, stock, transit, days: Math.floor(days), extra, noCost: !!cost && mode === 2 && !(cost.ocs > 0) });
-    worst = Math.max(worst, mode);
+    const daily = (Number(p.demand) || Number(p.monthly) || 0) / 30;
+    const days = daily > 0 ? (stock + transit) / daily : Infinity;
+    const box = (q) => (perBox > 0 ? Math.ceil(q / perBox) * perBox : q);
+    let ocsQty = 0, lclQty = 0;
+    if (days < cfg.lclDays) ocsQty = Math.min(box(Math.ceil(daily * (cfg.lclDays - days))), it.remain);
+    if (office) lclQty = Math.max(0, it.remain - ocsQty);                                   // 事務所在庫は残りを全部 混載便
+    else if (days < cfg.containerDays) lclQty = Math.min(box(Math.ceil(daily * (cfg.containerDays - Math.max(days, cfg.lclDays)))), it.remain - ocsQty);
+    const base = cost ? (office ? cost.lcl : cost.cont40 || cost.lcl) : 0;               // 送料差の基準: 事務所在庫は混載便、UF在庫はコンテナ（40ft）
+    const extra = (q, unit) => (q > 0 && unit > 0 && base > 0 && unit > base ? Math.round((unit - base) * q) : 0);
+    const d = isFinite(days) ? Math.floor(days) : null;
+    if (ocsQty > 0) rows.push({ code: it.code, vari: it.vari, mode: 2, qty: ocsQty, stock, transit, days: d, office, extra: extra(ocsQty, cost && cost.ocs), noCost: !!cost && !(cost.ocs > 0) });
+    if (lclQty > 0 && (!office || ocsQty > 0 || days < cfg.containerDays)) rows.push({ code: it.code, vari: it.vari, mode: 1, qty: lclQty, stock, transit, days: d, office, extra: office ? 0 : extra(lclQty, cost && cost.lcl) });
+    if (ocsQty > 0) worst = 2; else if (lclQty > 0 && !office) worst = Math.max(worst, 1);
   }
-  rows.sort((a, b) => b.mode - a.mode || a.days - b.days);
-  const label = ["コンテナ", "混載便", "OCS"][worst];
-  const yen = (n) => "¥" + n.toLocaleString("ja-JP");
-  const detail = rows.map((r) => `${["", "混載", "OCS"][r.mode]} ${r.vari || r.code} ${r.qty}個（在庫${r.stock}${r.transit ? "＋輸送中" + r.transit : ""}・あと${r.days}日` +
-    (r.extra > 0 ? `・コンテナ比 +${yen(r.extra)}` : r.noCost ? "・OCS料金未登録" : "") + "）").join("\n");
+  const allOffice = items > 0 && offices === items;
+  if (allOffice && worst === 0) worst = 1;                                                     // 事務所在庫はコンテナを使わない
+  rows.sort((a, b) => b.mode - a.mode || (a.days ?? 1e9) - (b.days ?? 1e9));
+  const label = worst === 2 ? "OCS" : worst === 1 ? "混載便" : "コンテナ";
+  const dest = (r) => (r.mode === 2 ? "OCS→事務所" : r.office ? "混載→事務所" : "混載→UF");
+  const detail = rows.map((r) => `${dest(r)} ${r.vari || r.code} ${r.qty}個（在庫${r.stock}${r.transit ? "＋輸送中" + r.transit : ""}${r.days != null ? "・あと" + r.days + "日" : ""}` +
+    (r.extra > 0 ? `・${r.office && r.mode === 2 ? "混載比" : "コンテナ比"} +${yen(r.extra)}` : r.mode === 2 && r.noCost ? "・OCS料金未登録" : "") + "）").join("\n");
   const extraTotal = rows.reduce((s, r) => s + (r.extra || 0), 0);
-  const minDays = rows.length ? Math.min(...rows.map((r) => r.days)) : null;
-  return { mode: worst, label, detail, rows, minDays, extraTotal };
+  const ds = rows.map((r) => r.days).filter((x) => x != null);
+  return { mode: worst, label, detail, rows, minDays: ds.length ? Math.min(...ds) : null, extraTotal, office: allOffice ? "事務所在庫" : offices ? "一部 事務所在庫" : "UF在庫" };
 }
 
 // 参考データ（Google スプレッドシート。人が管理しているものを読むだけ）
@@ -216,6 +224,18 @@ export function leadTimes(leadRows, now = Date.now(), days = 180) {
   const out = {};
   for (const [k, list] of Object.entries(v)) if (list.length >= 5) { list.sort((x, y) => x - y); out[k] = { p80: list[Math.min(list.length - 1, Math.floor(list.length * 0.8))], n: list.length }; }
   return out;
+}
+// 原価シートの商品名 → 品番3桁（チャットの呼び名の辞書を補う。「マザーズトート M」のサイズを外した名前は、ほかの品番と重ならない時だけ）
+export function costNames(costRows) {
+  const full = {}, base = {};
+  for (const r of costRows || []) {
+    const m = String(r[0] || "").match(/^ADS(\d{3})/i), name = String(r[1] || "").normalize("NFKC").trim(); if (!m || !name) continue;
+    full[name] = m[1];
+    const b = name.replace(/\s*(\(\d+L\)|\d+L|XL|S|M|L)$/i, "").trim();
+    if (b && b !== name) (base[b] ||= new Set()).add(m[1]);
+  }
+  for (const [b, set] of Object.entries(base)) if (set.size === 1 && !full[b]) full[b] = [...set][0];
+  return full;
 }
 export function costTable(costRows) {
   const out = {};

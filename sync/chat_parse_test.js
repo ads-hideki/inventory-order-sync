@@ -82,7 +82,17 @@ assert.ok(resolveLot({ folder: "002", orderDate: "2026-10-08" }, lots).reason); 
 // 8) 推奨: 在庫0 → OCS ／ 少ない → OCS ／ 混載で足りる → 混載 ／ 十分 → なし。入数120の箱単位・残数まで
 const rec = recommend(lots["2026-10-01|090"], products, { lclDays: 20, containerDays: 40 }, 120);
 assert.equal(rec.label, "OCS");
-assert.deepEqual(rec.rows.map((x) => [x.code, x.mode, x.qty, x.days]), [["ADS090C", 2, 240, 0], ["ADS090F", 2, 240, 5], ["ADS090A", 1, 120, 35]]);
+// OCS で混載便が届くまでをつなぎ、混載便でコンテナが届くまでをつなぐ（残数まで）
+assert.deepEqual(rec.rows.map((x) => [x.code, x.mode, x.qty, x.days]), [["ADS090C", 2, 240, 0], ["ADS090F", 2, 240, 5], ["ADS090C", 1, 60, 0], ["ADS090F", 1, 60, 5], ["ADS090A", 1, 120, 35]]);
+assert.match(rec.detail, /OCS→事務所 ピスタチオ×シナモン 240個/); assert.match(rec.detail, /混載→UF ブラック 120個/);
+// 事務所在庫: コンテナは使わない（足りない分 OCS→事務所、残りは全部 混載→事務所）。在庫が十分でも「混載便」
+const g = { ADS090C: "事務所在庫", ADS090F: "事務所在庫", ADS090A: "事務所在庫", ADS090B: "事務所在庫" };
+const recO = recommend(lots["2026-10-01|090"], products, { lclDays: 20, containerDays: 40 }, 120, null, g);
+assert.equal(recO.label, "OCS"); assert.equal(recO.office, "事務所在庫");
+assert.deepEqual(recO.rows.map((x) => [x.code, x.mode, x.qty]), [["ADS090C", 2, 240], ["ADS090F", 2, 240], ["ADS090C", 1, 60], ["ADS090F", 1, 60], ["ADS090A", 1, 300]]);
+assert.match(recO.detail, /混載→事務所 ブラック 300個/);
+const recO2 = recommend({ items: [{ code: "ADS090B", vari: "ネイビー", remain: 300 }] }, products, { lclDays: 20, containerDays: 40 }, 120, null, g);
+assert.equal(recO2.label, "混載便"); assert.equal(recO2.rows.length, 0);   // 在庫十分の事務所在庫は「混載便」（内訳なし）
 
 // 9) 参考シート: 輸送日数（80%値・直近180日・5件以上）と原価（品番3桁・サイズ違いは入数の小さい方）
 const L = (co, a, b) => ["", "", "", "", "", "", "", "", a, b, "", co];
@@ -92,7 +102,7 @@ const C = (code, c40, lcl, ocs, w) => { const r = Array(23).fill(""); r[0] = cod
 const ct = costTable([C("ADS002-M", "17 ", "22 ", "", "70 "), C("ADS002-L", "20", "27", "", "60"), C("ADS007", "ー", "66", "127", "45"), ["型番"]]);
 assert.deepEqual(ct["002"], { cont20: 0, cont40: 17, lcl: 22, ocs: 0, perBox: 60 }); assert.equal(ct["007"].ocs, 127);
 const rec2 = recommend(lots["2026-10-01|090"], products, { lclDays: 20, containerDays: 40 }, 120, { cont40: 10, lcl: 30, ocs: 0 });
-assert.match(rec2.detail, /OCS料金未登録/); assert.match(rec2.detail, /混載 ブラック 120個.*コンテナ比 \+¥2,400/);
+assert.match(rec2.detail, /OCS料金未登録/); assert.match(rec2.detail, /混載→UF ブラック 120個.*コンテナ比 \+¥2,400/);
 
 // 10) 納期の回答（引用の見出しから品番を取る）
 r = parseMessage(msg(`[To:1]Kato さん
