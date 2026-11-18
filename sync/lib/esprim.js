@@ -4,7 +4,7 @@
 //     発注・輸送中・お届け済みは発注管理の画面が正（発注確定・インボイス取込・追跡）なので、チャットからは拾わない
 //   ・判定できなかった報告は捨てずに「未判定」に回す（辞書に呼び名を足すと次の回で拾い直す）
 export const STAGES = ["生産中", "到着予定", "検品待ち", "検品中", "検品済"];
-export const AT_ESPRIM = new Set(["検品待ち", "検品中", "検品済"]);   // エスプリムに現物がある状態
+export const AT_ESPRIM = new Set(["検品待ち", "検品中", "検品済", "転送"]);   // エスプリムに現物がある状態（転送＝青島の工場から届いた分）
 const UNIT = "個箱枚冊元円本日月年時分秒色点件名人回着袋足組台セ";       // 「135個」「960箱」などを品番と読まないため
 const JP = "ぁ-んァ-ヶ一-龠";
 
@@ -32,7 +32,7 @@ function withYear(m, d, msgDate, limit) {
 }
 
 // 「261006発注分」「10.8発注分」「9/16発注分」「0916発注分」→ 発注日。見つけた部分は行から取り除く
-function takeOrderDate(line, msgDate) {
+export function takeOrderDate(line, msgDate) {
   const m = line.match(/(?<!\d)(\d{6}|\d{4}|\d{1,2}\s?[./]\s?\d{1,2})\s*発注分?/);
   if (!m) return { date: "", rest: line, has: /発注分/.test(line) };
   const t = m[1].replace(/\s/g, ""); let date = "";
@@ -70,7 +70,7 @@ export function buildIndex(products, aliases = {}) {
 }
 
 // 1行から商品（品番3桁）を探す。番号 → 呼び名の順。呼び名が複数の品番に同じ長さで当たったら「あいまい」
-function findProducts(line, index) {
+export function findProducts(line, index) {
   const out = []; const add = (folder, code, how, qty) => { if (index.folders.has(folder) && !out.some((x) => x.folder === folder)) out.push({ folder, code: code || "", how, qty: qty || 0 }); };
   for (const m of line.matchAll(/ADS\s?(\d{3})([A-Z])?/gi)) add(m[1], m[2] ? `ADS${m[1]}${m[2].toUpperCase()}` : "", "番号");
   for (const m of line.matchAll(/(?<![\dA-Za-z.*\/])(\d{3})([A-Z])(\d+)個/g)) add(m[1], `ADS${m[1]}${m[2]}`, "番号", +m[3]);   // 「011A168個」

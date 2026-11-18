@@ -10,8 +10,8 @@ import fs from "node:fs";
 const API = "https://sheets.googleapis.com/v4/spreadsheets/";
 export const TAB = { main: "エスプリム在庫", unknown: "未判定", dict: "辞書" };
 const HEADER = ["担当", "ステータス", "ステータス上書き\n（手入力・空で自動）", "発注日", "品番", "商品名", "残数", "色別の残数", "到着日\n（予定）", "箱数", "CBM", "入数",
-  "推奨", "推奨の内訳", "在庫が\nもつ日数", "箱数①\n今回コンテナ", "箱数②\n次のコンテナ", "箱数③\n混載便・OCS", "今回\nCBM", "次回\nCBM", "混載等\nCBM", "備考", "チャットの報告", "報告日時", "キー"];
-const COLS = HEADER.length;                                   // A〜Y
+  "推奨", "推奨の内訳", "在庫が\nもつ日数", "箱数①\n今回コンテナ", "箱数②\n次のコンテナ", "箱数③\n混載便・OCS", "今回\nCBM", "次回\nCBM", "混載等\nCBM", "備考", "チャットの報告", "報告日時", "コンテナ計算シート\n（エスプリム記入）", "キー"];
+const COLS = HEADER.length;                                   // A〜Z
 const KEEP = { over: 2, b1: 15, b2: 16, b3: 17, note: 21 };   // 手入力の列（更新しても残す）
 const FALLBACK = { boxes: 9, cbm: 10, perBox: 11 };           // チャットから取れなかった時は、シートに手入力した値を残す
 
@@ -47,9 +47,9 @@ export async function openSheet(sheetId) {
   const d = await call("GET", `${sheetId}/values/${enc(`${q(TAB.dict)}!A2:B`)}`);
   for (const r of d.values || []) { const k = String(r[0] || "").trim(), v = String(r[1] || "").trim(); if (k && v && !k.startsWith("（例）")) aliases[k] = v; }
   if (!created) {
-    const cur = await call("GET", `${sheetId}/values/${enc(`${q(TAB.main)}!A3:Y`)}?valueRenderOption=UNFORMATTED_VALUE`);
+    const cur = await call("GET", `${sheetId}/values/${enc(`${q(TAB.main)}!A3:Z`)}?valueRenderOption=UNFORMATTED_VALUE`);
     for (const r of cur.values || []) {
-      const key = String(r[COLS - 1] || "").trim(); if (!key.includes("|")) continue;
+      const key = [r[COLS - 1], r[24]].map((x) => String(x || "").trim()).find((x) => /^\d{4}-\d{2}-\d{2}\|\d{3}$/.test(x)); if (!key) continue;   // 列を足す前（キーが Y 列）の行も読む
       const k = {}; for (const [name, i] of Object.entries({ ...KEEP, ...FALLBACK })) if (r[i] !== undefined && r[i] !== "") k[name] = r[i];
       keep[key] = k;
     }
@@ -58,38 +58,69 @@ export async function openSheet(sheetId) {
 }
 
 // rows = [{key, room, stage, date, folder, name, remain, items, arrive, boxes, cbm, perBox, rec, recDetail, minDays, text, at}]
-export async function writeSheet(sh, { rows, unknown, now, cap, basis }) {
+export async function writeSheet(sh, { rows, unknown, now, cap, basis, format }) {
   const { call, sheetId, tabs, keep } = sh;
   const values = [["エスプリム在庫（チャットから自動更新）", "", `更新 ${now}`, basis || "", "", "", "", "", "", "", "", "", "", "", "",
-    "40HQ（CBM）", cap, "今回 計→", `=SUM(S3:S)`, `=SUM(T3:T)`, `=SUM(U3:U)`, "", "", "", ""], HEADER];
+    "40HQ（CBM）", cap, "今回 計→", `=SUM(S3:S)`, `=SUM(T3:T)`, `=SUM(U3:U)`, "", "", "", "", ""], HEADER];
   rows.forEach((x, i) => {
     const r = i + 3, k = keep[x.key] || {};
     const part = (c) => `=IF(OR(N(J${r})=0,N(K${r})=0,N(${c}${r})=0),"",K${r}/J${r}*${c}${r})`;
     values.push([x.room || "", x.stage, k.over ?? "", x.date.replace(/-/g, "/"), `'${x.folder}`, x.name, x.remain, x.items, x.arrive || "",
       x.boxes || k.boxes || "", x.cbm || k.cbm || "", x.perBox || k.perBox || "", x.rec || "", x.recDetail || "", x.minDays ?? "",
-      k.b1 ?? "", k.b2 ?? "", k.b3 ?? "", part("P"), part("Q"), part("R"), k.note ?? "", x.text || "", x.at || "", x.key]);
+      k.b1 ?? "", k.b2 ?? "", k.b3 ?? "", part("P"), part("Q"), part("R"), k.note ?? "", x.text || "", x.at || "", x.sheet || "", x.key]);
   });
   const main = tabs[TAB.main], L = values.length;
   if ((main.gridProperties.rowCount || 0) < L + 5) await call("POST", `${sheetId}:batchUpdate`, { requests: [{ appendDimension: { sheetId: main.sheetId, dimension: "ROWS", length: L + 30 - (main.gridProperties.rowCount || 0) } }] });
-  await call("POST", `${sheetId}/values/${enc(`${q(TAB.main)}!A1:Y`)}:clear`, {});
+  await call("POST", `${sheetId}/values/${enc(`${q(TAB.main)}!A1:Z`)}:clear`, {});
   await call("PUT", `${sheetId}/values/${enc(`${q(TAB.main)}!A1`)}?valueInputOption=USER_ENTERED`, { values });
 
   const u = [["報告日時", "担当", "発言者", "理由", "本文（抜粋）"], ...unknown.map((x) => [x.at, x.room || "", x.who || "", x.reason, x.text])];
   await call("POST", `${sheetId}/values/${enc(`${q(TAB.unknown)}!A1:E`)}:clear`, {});
   await call("PUT", `${sheetId}/values/${enc(`${q(TAB.unknown)}!A1`)}?valueInputOption=RAW`, { values: u });
 
-  // 書式はタブを作った時だけ（手で直した幅・色を戻さない）。失敗しても本体には影響させない
-  if (sh.created) try {
-    const sid = main.sheetId, w = (i, px) => ({ updateDimensionProperties: { range: { sheetId: sid, dimension: "COLUMNS", startIndex: i, endIndex: i + 1 }, properties: { pixelSize: px }, fields: "pixelSize" } });
-    const fmt = (c0, c1, r0, r1, f, fields) => ({ repeatCell: { range: { sheetId: sid, startRowIndex: r0, ...(r1 != null ? { endRowIndex: r1 } : {}), startColumnIndex: c0, endColumnIndex: c1 }, cell: { userEnteredFormat: f }, fields } });
-    await call("POST", `${sheetId}:batchUpdate`, { requests: [
-      { updateSheetProperties: { properties: { sheetId: sid, gridProperties: { frozenRowCount: 2, frozenColumnCount: 6 } }, fields: "gridProperties.frozenRowCount,gridProperties.frozenColumnCount" } },
-      fmt(0, COLS, 1, 2, { textFormat: { bold: true }, backgroundColor: { red: 0.9, green: 0.93, blue: 0.98 }, wrapStrategy: "WRAP", verticalAlignment: "MIDDLE" }, "userEnteredFormat(textFormat.bold,backgroundColor,wrapStrategy,verticalAlignment)"),
-      fmt(0, COLS, 2, null, { wrapStrategy: "WRAP", verticalAlignment: "TOP" }, "userEnteredFormat(wrapStrategy,verticalAlignment)"),
-      ...[2, 15, 16, 17, 21].map((c) => fmt(c, c + 1, 2, null, { backgroundColor: { red: 1, green: 1, blue: 0.8 } }, "userEnteredFormat.backgroundColor")),
-      fmt(18, 21, 2, null, { numberFormat: { type: "NUMBER", pattern: "0.00" } }, "userEnteredFormat.numberFormat"),
-      w(5, 180), w(7, 220), w(13, 300), w(21, 160), w(22, 320), w(24, 110),
-    ] });
-  } catch (e) { console.error("[chat] シートの書式設定に失敗（続行）:", e.message); }
+  if (format) await applyFormat(sh);
   return { rows: rows.length, unknown: unknown.length };
+}
+
+// 列幅・折り返し・固定・色（FORMAT_VER が変わった時だけ。手で直した幅を毎回戻さないため）
+//   Sheets API の fields は括弧を使わず、パスをカンマ区切りで書く（括弧だと失敗する）
+export const FORMAT_VER = 3;
+const WIDTH = [45, 80, 95, 85, 50, 170, 60, 260, 75, 50, 55, 50, 70, 330, 70, 75, 75, 85, 60, 60, 65, 150, 300, 120, 300, 130];
+const WRAP_COLS = [5, 7, 13, 21, 22, 24];   // 商品名・色別の残数・推奨の内訳・備考・チャットの報告・コンテナ計算シート（長いので折り返す）
+export async function applyFormat(sh) {
+  const { call, sheetId, tabs } = sh, sid = tabs[TAB.main].sheetId;
+  const rng = (c0, c1, r0, r1) => ({ sheetId: sid, startRowIndex: r0, ...(r1 != null ? { endRowIndex: r1 } : {}), startColumnIndex: c0, endColumnIndex: c1 });
+  const fmt = (c0, c1, r0, r1, f, fields) => ({ repeatCell: { range: rng(c0, c1, r0, r1), cell: { userEnteredFormat: f }, fields } });
+  const center = (c) => fmt(c, c + 1, 2, null, { horizontalAlignment: "CENTER" }, "userEnteredFormat.horizontalAlignment");
+  const reqs = [
+    { updateSheetProperties: { properties: { sheetId: sid, gridProperties: { frozenRowCount: 2, frozenColumnCount: 6 } }, fields: "gridProperties.frozenRowCount,gridProperties.frozenColumnCount" } },
+    ...WIDTH.map((px, i) => ({ updateDimensionProperties: { range: { sheetId: sid, dimension: "COLUMNS", startIndex: i, endIndex: i + 1 }, properties: { pixelSize: px }, fields: "pixelSize" } })),
+    // 本文: 上揃え・はみ出しは切る（長い列だけ折り返す）
+    fmt(0, COLS, 2, null, { wrapStrategy: "CLIP", verticalAlignment: "TOP" }, "userEnteredFormat.wrapStrategy,userEnteredFormat.verticalAlignment"),
+    ...WRAP_COLS.map((c) => fmt(c, c + 1, 2, null, { wrapStrategy: "WRAP" }, "userEnteredFormat.wrapStrategy")),
+    // 見出し（2行目）: 太字・色・折り返し・中央
+    fmt(0, COLS, 1, 2, { textFormat: { bold: true }, backgroundColor: { red: 0.9, green: 0.93, blue: 0.98 }, wrapStrategy: "WRAP", verticalAlignment: "MIDDLE", horizontalAlignment: "CENTER" },
+      "userEnteredFormat.textFormat.bold,userEnteredFormat.backgroundColor,userEnteredFormat.wrapStrategy,userEnteredFormat.verticalAlignment,userEnteredFormat.horizontalAlignment"),
+    { updateDimensionProperties: { range: { sheetId: sid, dimension: "ROWS", startIndex: 1, endIndex: 2 }, properties: { pixelSize: 44 }, fields: "pixelSize" } },
+    // 1行目: 折り返さず横にはみ出して表示
+    fmt(0, COLS, 0, 1, { wrapStrategy: "OVERFLOW_CELL", textFormat: { bold: true } }, "userEnteredFormat.wrapStrategy,userEnteredFormat.textFormat.bold"),
+    // 手入力の列は黄色
+    ...[2, 15, 16, 17, 21].map((c) => fmt(c, c + 1, 2, null, { backgroundColor: { red: 1, green: 1, blue: 0.8 } }, "userEnteredFormat.backgroundColor")),
+    fmt(3, 4, 2, null, { numberFormat: { type: "DATE", pattern: "yyyy/mm/dd" } }, "userEnteredFormat.numberFormat"),
+    fmt(10, 11, 2, null, { numberFormat: { type: "NUMBER", pattern: "0.00" } }, "userEnteredFormat.numberFormat"),
+    fmt(18, 21, 2, null, { numberFormat: { type: "NUMBER", pattern: "0.00" } }, "userEnteredFormat.numberFormat"),
+    fmt(6, 7, 2, null, { numberFormat: { type: "NUMBER", pattern: "#,##0" } }, "userEnteredFormat.numberFormat"),
+    ...[0, 1, 4, 8, 9, 11, 12, 14].map(center),
+    fmt(25, 26, 2, null, { textFormat: { foregroundColor: { red: 0.6, green: 0.6, blue: 0.6 } } }, "userEnteredFormat.textFormat.foregroundColor"),
+  ];
+  // 未判定タブ: 本文の列を広く・折り返し
+  if (tabs[TAB.unknown]) {
+    const u = tabs[TAB.unknown].sheetId;
+    [120, 45, 120, 260, 520].forEach((px, i) => reqs.push({ updateDimensionProperties: { range: { sheetId: u, dimension: "COLUMNS", startIndex: i, endIndex: i + 1 }, properties: { pixelSize: px }, fields: "pixelSize" } }));
+    reqs.push({ repeatCell: { range: { sheetId: u, startRowIndex: 0, startColumnIndex: 0, endColumnIndex: 5 }, cell: { userEnteredFormat: { wrapStrategy: "WRAP", verticalAlignment: "TOP" } }, fields: "userEnteredFormat.wrapStrategy,userEnteredFormat.verticalAlignment" } });
+    reqs.push({ updateSheetProperties: { properties: { sheetId: u, gridProperties: { frozenRowCount: 1 } }, fields: "gridProperties.frozenRowCount" } });
+  }
+  if (tabs[TAB.dict]) [200, 90, 400].forEach((px, i) => reqs.push({ updateDimensionProperties: { range: { sheetId: tabs[TAB.dict].sheetId, dimension: "COLUMNS", startIndex: i, endIndex: i + 1 }, properties: { pixelSize: px }, fields: "pixelSize" } }));
+  try { await call("POST", `${sheetId}:batchUpdate`, { requests: reqs }); return true; }
+  catch (e) { console.error("[chat] シートの書式設定に失敗（続行）:", e.message); return false; }
 }

@@ -10,6 +10,7 @@
 //   { rooms: [{id, label}], sheetId, notifyRoomId?, containerCbm?,
 //     leadSheet?: {id, range}  … 発注・入庫の入力シート（出荷日 I・入庫日 J・輸送会社 L）。輸送方法ごとの日数（直近180日の80%値）を出す
 //     costSheet?: {id, range}  … 原価シート（40ft L・混載便 M・OCS N・国際入数 W）。1個あたりの送料差と入数に使う
+//     containerTabs?: [{range, room}] … エスプリムのコンテナ計算シート（担当ごとのタブを IMPORTRANGE で取り込んだもの）。チャットの補助
 //     lclWait?, containerWait? … 混載便・コンテナの出荷待ちの日数（既定 3・7）。lclDays/containerDays は入力シートが読めない時の日数 }
 //   参考シートはこのシステムのサービスアカウントに「閲覧者」で共有しておく（読むだけ）
 // 鍵:   CHATWORK_API_TOKEN（GitHub Secret）／ FIREBASE_SERVICE_ACCOUNT（daily-sync と同じ）
@@ -17,7 +18,8 @@
 //         node chat_sync.js --setup --sheet=<スプレッドシートID> --rooms=<ルームID>:<担当>,<ルームID>:<担当>…   （設定を保存するだけ）
 import { fetchMessages, postMessage, newerId } from "./lib/chatwork.js";
 import { parseMessage, buildIndex, buildLots, resolveLot, recommend, leadTimes, costTable, STAGES, AT_ESPRIM } from "./lib/esprim.js";
-import { openSheet, writeSheet } from "./lib/esprim_sheet.js";
+import { openSheet, writeSheet, FORMAT_VER } from "./lib/esprim_sheet.js";
+import { parseContainerTab } from "./lib/container_sheet.js";
 import { initFirestore, readSnapshotProducts } from "./lib/firestore.js";
 
 const DRY = process.argv.includes("--dry-run");
@@ -51,6 +53,7 @@ async function setup(db) {
     const id = patch.sheetId || ((await db.collection("settings").doc("chatSync").get()).data() || {}).sheetId;
     if (!id) throw new Error("先に --sheet= でエスプリム在庫シートを登録してください");
     patch.leadSheet = { id, range: "参考_入力!A1:L" }; patch.costSheet = { id, range: "参考_原価!A1:W" };
+    patch.containerTabs = [{ range: "参考_兪!A1:L", room: "1" }, { range: "参考_ナナ!A1:L", room: "2" }, { range: "参考_張!A1:L", room: "3" }];
   }
   if (!Object.keys(patch).length) throw new Error("--sheet= / --rooms= / --lead= / --cost= / --refs=here / --notify= のどれかを指定してください");
   await db.collection("settings").doc("chatSync").set({ ...patch, updatedAt: new Date() }, { merge: true });
@@ -117,16 +120,40 @@ async function main() {
     s.upd = Date.now(); applied++;
   }
 
+  // 2-b) コンテナ計算シート（エスプリムが記入）。チャットの補助: 状態はチャットとシートの進んでいる方、箱数・CBM・入数はシートの実数
+  const RANK = { "生産中": 0, "到着予定": 1, "検品待ち": 2, "転送": 2, "検品中": 3, "検品済": 4 };
+  const sheetLot = {}, sheetUnknown = []; let sheetItems = 0;
+  const today = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+  for (const t of (sh && cfg.containerTabs) || []) {
+    let items = [];
+    try { items = parseContainerTab((await sh.call("GET", `${cfg.sheetId}/values/${encodeURIComponent(t.range)}`)).values || [], index, today); }
+    catch (e) { console.error("[chat] コンテナ計算シートを読めません（続行）:", e.message); continue; }
+    for (const it of items) {
+      sheetItems++;
+      const r = it.folder ? resolveLot(it, lots) : { reason: it.many ? "品番が2つ以上書かれている" : "品番が分からない" };
+      if (!r.lot) { if (it.stage !== "返品中") sheetUnknown.push({ reason: "コンテナ計算シート: " + r.reason, time: 0, at: `（シート ${it.label}）`, room: t.room, who: "", text: it.text }); continue; }
+      const L = (sheetLot[r.lot.key] ||= { room: t.room, parts: [], boxes: 0, cbm: 0, perBox: 0, best: null });
+      L.parts.push(`${it.label} ${it.stage || it.stText || "-"} ${it.boxes}箱 ${it.cbm}CBM${it.memo ? "（" + it.memo + "）" : ""}`);
+      if (AT_ESPRIM.has(it.stage)) { L.boxes += it.boxes; L.cbm += it.cbm; }
+      if (it.perBox) L.perBox = it.perBox;
+      if (AT_ESPRIM.has(it.stage) && (!L.best || it.boxes > L.best.boxes)) L.best = it;
+    }
+  }
+
   // 3) 1行 = 生産中の発注ロット。エスプリムに現物があるものに推奨を付ける
   const rows = [];
   for (const lot of Object.values(lots)) {
     const s = state.lots[lot.key] || { stage: "生産中" }, k = (sh && sh.keep[lot.key]) || {}, b = state.box[lot.folder] || {};
     const c = costs[lot.folder];
-    const stage = String(k.over || "").trim() || s.stage, perBox = Number(b.perBox) || Number(k.perBox) || (c && c.perBox) || 0;   // 入数: チャット → 手入力 → 原価シートの国際入数
-    let boxes = s.boxes || 0, cbm = s.cbm || 0;
+    const sl = sheetLot[lot.key];
+    let auto = s.stage;
+    if (sl && sl.best && (RANK[sl.best.stage] ?? 0) > (RANK[auto] ?? 0)) auto = sl.best.stage;
+    const stage = String(k.over || "").trim() || auto;
+    const perBox = Number(b.perBox) || (sl && sl.perBox) || Number(k.perBox) || (c && c.perBox) || 0;   // 入数: チャット → コンテナ計算シート → 手入力 → 原価シートの国際入数
+    let boxes = (sl && sl.boxes) || s.boxes || 0, cbm = (sl && Math.round(sl.cbm * 100) / 100) || s.cbm || 0;
     if (!boxes && perBox && AT_ESPRIM.has(stage)) { boxes = Math.ceil(lot.remain / perBox); if (b.boxCbm) cbm = Math.round(boxes * b.boxCbm * 100) / 100; }   // 報告が無ければ 残数÷入数 の目安
     const rec = AT_ESPRIM.has(stage) ? recommend(lot, products, cfg, perBox, c) : null;
-    rows.push({ key: lot.key, room: s.room || "", stage, date: lot.date, folder: lot.folder, name: lot.name, remain: lot.remain,
+    rows.push({ key: lot.key, room: s.room || (sl && sl.room) || "", stage, sheet: sl ? sl.parts.join("\n") : "", date: lot.date, folder: lot.folder, name: lot.name, remain: lot.remain,
       items: lot.items.map((i) => `${i.vari || i.code} ${i.remain}`).join("、"),
       arrive: stage === "到着予定" ? (s.eta ? `${s.eta.slice(5).replace("-", "/")} 予定` : "") : (s.arrive || "").slice(5).replace("-", "/"),
       boxes, cbm, perBox, rec: rec ? rec.label : "", recDetail: rec ? rec.detail : "", minDays: rec ? rec.minDays : null,
@@ -143,11 +170,13 @@ async function main() {
   for (const key of Object.keys(state.lots)) if (!lots[key] && Date.now() - (state.lots[key].upd || 0) > 45 * 86400000) delete state.lots[key];
 
   const count = {}; for (const r of rows) count[r.stage] = (count[r.stage] || 0) + 1;
-  const summary = `参考シート 輸送日数${Object.keys(lead).length ? "あり" : "なし"}・原価${Object.keys(costs).length ? Object.keys(costs).length + "品番" : "なし"} ／ メッセージ ${fetched}件（新規 ${fresh}）／ 報告 ${applied}件を反映 ／ 未判定 ${state.unknown.length}件 ／ 発注ロット ${rows.length}件（${Object.entries(count).map(([k, v]) => `${k}${v}`).join("・")}）／ 推奨 OCS ${rows.filter((r) => r.rec === "OCS").length}・混載便 ${rows.filter((r) => r.rec === "混載便").length}`;
+  const summary = `参考シート 輸送日数${Object.keys(lead).length ? "あり" : "なし"}・原価${Object.keys(costs).length ? Object.keys(costs).length + "品番" : "なし"}・コンテナ計算 ${sheetItems}行（結び付け ${Object.keys(sheetLot).length}件・不明 ${sheetUnknown.length}件） ／ メッセージ ${fetched}件（新規 ${fresh}）／ 報告 ${applied}件を反映 ／ 未判定 ${state.unknown.length}件 ／ 発注ロット ${rows.length}件（${Object.entries(count).map(([k, v]) => `${k}${v}`).join("・")}）／ 推奨 OCS ${rows.filter((r) => r.rec === "OCS").length}・混載便 ${rows.filter((r) => r.rec === "混載便").length}`;
   if (DRY) { console.log(`[chat] ${summary}`); console.log("[chat] DRY-RUN のため書き込みなし"); return; }
 
   // 4) 書き出し・通知・状態の保存
-  if (sh) await writeSheet(sh, { rows, unknown: state.unknown.map((u) => ({ ...u, at: jst(u.time * 1000) })), now: jst(Date.now()), cap: cfg.containerCbm, basis });
+  const format = sh && (state.formatVer !== FORMAT_VER || state.formatSheet !== cfg.sheetId || process.argv.includes("--format"));
+  if (sh) await writeSheet(sh, { rows, unknown: state.unknown.map((u) => ({ ...u, at: jst(u.time * 1000) })).concat(sheetUnknown), now: jst(Date.now()), cap: cfg.containerCbm, basis, format });
+  if (format) { state.formatVer = FORMAT_VER; state.formatSheet = cfg.sheetId; }
   const alerts = rows.filter((r) => r._new && r._rec && r._rec.mode > 0);
   let notified = 0;
   if (cfg.notifyRoomId && alerts.length) {
@@ -155,7 +184,7 @@ async function main() {
       alerts.map((r) => `■ ${r.folder} ${r.name}（${r.date.slice(5).replace("-", "/")}発注分・${r.stage}）→ ${r.rec} 推奨\n${r.recDetail}`).join("\n\n") + "[/info]";
     try { await postMessage(token, cfg.notifyRoomId, body); notified = alerts.length; } catch (e) { console.error("[chat] 通知に失敗（続行）:", e.message); }
   }
-  await stateRef.set({ last: state.last, lots: state.lots, unknown: state.unknown, box: state.box, updatedAt: new Date(), summary });
+  await stateRef.set({ last: state.last, lots: state.lots, unknown: state.unknown, box: state.box, formatVer: state.formatVer || 0, formatSheet: state.formatSheet || "", updatedAt: new Date(), summary });
   console.log(`[chat] ${summary}${notified ? ` ／ 通知 ${notified}件` : ""}${sh ? "" : " ／ シート未設定"}`);
   console.log(`[chat] 完了 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   if (failed === cfg.rooms.length) process.exit(1);
