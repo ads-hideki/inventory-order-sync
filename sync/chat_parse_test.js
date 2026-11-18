@@ -71,8 +71,9 @@ const orders = [
   { id: "f", d: { status: "production", code: "ADS002A", date: "2026-10-08", qty: 1100, shipped: 1100 } },
   { id: "g", d: { status: "transit", code: "ADS035A", date: "2026-09-01", qty: 100 } },
 ];
+orders.push({ id: "h", d: { status: "production", code: "ADS035A", date: "V2026/09/05", qty: 10, shipped: 0 } }, { id: "i", d: { status: "production", code: "ADS035A", date: "", qty: 10 } });
 const lots = buildLots(orders, products);
-assert.deepEqual(Object.keys(lots).sort(), ["2026-10-01|090", "2026-10-06|035"]);
+assert.deepEqual(Object.keys(lots).sort(), ["2026-09-05|035", "2026-10-01|090", "2026-10-06|035"]);   // 「V2026/09/05」も読む・日付なしは飛ばす
 assert.equal(resolveLot({ folder: "035", orderDate: "2026-10-06" }, lots).lot.key, "2026-10-06|035");
 assert.equal(resolveLot({ folder: "090", orderDate: "" }, lots).lot.key, "2026-10-01|090");
 assert.ok(resolveLot({ folder: "035", orderDate: "2026-08-01" }, lots).reason);

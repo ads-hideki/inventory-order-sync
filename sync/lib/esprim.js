@@ -140,7 +140,10 @@ export function buildLots(orders, products) {
   for (const { d } of orders) {
     if (!d || d.status !== "production") continue;
     const code = String(d.code || "").toUpperCase(), remain = (Number(d.qty) || 0) - (Number(d.shipped) || 0);
-    const folder = (code.match(/ADS(\d{3})/) || [])[1]; const date = String(d.date || "").slice(0, 10);
+    // 発注日は「2026-10-06」に揃える（「2026/10/6」や前後に文字が付いた値もあるため。読めない日付の発注は飛ばす）
+    const dm = String(d.date || "").match(/(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+    const date = dm ? `${dm[1]}-${dm[2].padStart(2, "0")}-${dm[3].padStart(2, "0")}` : "";
+    const folder = (code.match(/ADS(\d{3})/) || [])[1];
     if (!folder || !date || remain <= 0) continue;
     const key = `${date}|${folder}`, p = products[code] || {};
     const lot = (lots[key] ||= { key, date, folder, name: "", supplier: d.supplier || "", items: [], remain: 0 });

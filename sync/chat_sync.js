@@ -128,7 +128,7 @@ async function main() {
   }
   // 納期の回答 → 生産管理の到着予定（その品番の、回答日の少し前〜20日前に発注した生産中）
   const dayDiff = (a, b) => Math.round((Date.parse(a) - Date.parse(b)) / 86400000);
-  const addDays = (d, n) => new Date(Date.parse(d) + n * 86400000).toISOString().slice(0, 10);
+  const addDays = (d, n) => { const t = Date.parse(d); return isNaN(t) ? "" : new Date(t + n * 86400000).toISOString().slice(0, 10); };
   for (const l of leadReplies) {
     const lot = Object.values(lots).filter((x) => x.folder === l.folder && dayDiff(l.date, x.date) >= -3 && dayDiff(l.date, x.date) <= 20).sort((x, y) => (x.date < y.date ? 1 : -1))[0];
     if (lot) eta[lot.key] = { date: addDays(lot.date, l.days), days: l.days, at: l.time };
