@@ -159,10 +159,12 @@ export function resolveLot(ev, lots) {
   return cand.length === 1 ? { lot: cand[0] } : { reason: "発注日が書かれておらず、生産中の発注が複数ある" };
 }
 
-// 輸送手段の推奨（エスプリムに現物があるロットだけ）。cfg = {lclDays, containerDays}（混載便・コンテナで売り場に並ぶまでの日数）
+// 輸送手段の推奨（エスプリムに現物があるロットだけ）
+//   cfg = {lclDays, containerDays}（混載便・コンテナで国内に入庫するまでの日数。出荷待ちを含む）
+//   cost = {cont40, lcl, ocs}（1個あたりの国際送料・円。原価シートの L〜N 列。無ければ料金は出さない）
 //   型番ごとに「（国内在庫＋輸送中）÷ 1日の販売」で何日もつかを出し、
 //   混載便でも間に合わない分 → OCS ／ コンテナだと間に合わない分 → 混載便 ／ それ以外 → コンテナ
-export function recommend(lot, products, cfg, perBox) {
+export function recommend(lot, products, cfg, perBox, cost) {
   const rows = []; let worst = 0;
   for (const it of lot.items) {
     const p = products[it.code]; if (!p) continue;
@@ -173,11 +175,48 @@ export function recommend(lot, products, cfg, perBox) {
     if (!mode) continue;
     let qty = Math.ceil(daily * (until - days)); if (perBox > 0) qty = Math.ceil(qty / perBox) * perBox;
     qty = Math.min(qty, it.remain); if (qty <= 0) continue;
-    rows.push({ code: it.code, vari: it.vari, mode, qty, stock, transit, days: Math.floor(days) }); worst = Math.max(worst, mode);
+    // コンテナ（40ft）で送る場合との差額
+    const unit = cost ? (mode === 2 ? cost.ocs : cost.lcl) : 0, base = cost ? cost.cont40 || cost.lcl : 0;
+    const extra = unit > 0 && base > 0 ? Math.round((unit - base) * qty) : null;
+    rows.push({ code: it.code, vari: it.vari, mode, qty, stock, transit, days: Math.floor(days), extra, noCost: !!cost && mode === 2 && !(cost.ocs > 0) });
+    worst = Math.max(worst, mode);
   }
   rows.sort((a, b) => b.mode - a.mode || a.days - b.days);
   const label = ["コンテナ", "混載便", "OCS"][worst];
-  const detail = rows.map((r) => `${["", "混載", "OCS"][r.mode]} ${r.vari || r.code} ${r.qty}個（在庫${r.stock}${r.transit ? "＋輸送中" + r.transit : ""}・あと${r.days}日）`).join("\n");
+  const yen = (n) => "¥" + n.toLocaleString("ja-JP");
+  const detail = rows.map((r) => `${["", "混載", "OCS"][r.mode]} ${r.vari || r.code} ${r.qty}個（在庫${r.stock}${r.transit ? "＋輸送中" + r.transit : ""}・あと${r.days}日` +
+    (r.extra > 0 ? `・コンテナ比 +${yen(r.extra)}` : r.noCost ? "・OCS料金未登録" : "") + "）").join("\n");
+  const extraTotal = rows.reduce((s, r) => s + (r.extra || 0), 0);
   const minDays = rows.length ? Math.min(...rows.map((r) => r.days)) : null;
-  return { mode: worst, label, detail, rows, minDays };
+  return { mode: worst, label, detail, rows, minDays, extraTotal };
+}
+
+// 参考データ（Google スプレッドシート。人が管理しているものを読むだけ）
+//   leadRows: 発注・入庫の入力シート [[…, 出荷日(I), 入庫日(J), 期間, 輸送会社(L), …]] → 輸送方法ごとの日数（直近 days 日に出荷した分の 80% 値）
+//   costRows: 原価シート [[型番(A), …, 20ft(K), 40ft(L), 混載便(M), OCS(N), …, 国際入数(W)]] → 品番3桁ごとの 1個あたり送料・入数
+const toDate = (s) => { const m = String(s || "").match(/(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : NaN; };
+const num = (s) => { const n = Number(String(s ?? "").replace(/[,¥円\s]/g, "")); return isFinite(n) ? n : 0; };
+export const LEAD_MODES = { ocs: /^OCS/i, lcl: /^(海源|TW|EW)(?!.*コンテナ)/, container: /コンテナ/ };
+export function leadTimes(leadRows, now = Date.now(), days = 180) {
+  const v = { ocs: [], lcl: [], container: [] };
+  for (const r of leadRows || []) {
+    const a = toDate(r[8]), b = toDate(r[9]), co = String(r[11] || "").trim();
+    if (!co || isNaN(a) || isNaN(b) || now - a > days * 86400000) continue;
+    const d = Math.round((b - a) / 86400000); if (d < 0 || d > 120) continue;
+    for (const [k, re] of Object.entries(LEAD_MODES)) if (re.test(co)) { v[k].push(d); break; }
+  }
+  const out = {};
+  for (const [k, list] of Object.entries(v)) if (list.length >= 5) { list.sort((x, y) => x - y); out[k] = { p80: list[Math.min(list.length - 1, Math.floor(list.length * 0.8))], n: list.length }; }
+  return out;
+}
+export function costTable(costRows) {
+  const out = {};
+  for (const r of costRows || []) {
+    const m = String(r[0] || "").match(/^ADS(\d{3})/i); if (!m) continue;
+    const x = { cont20: num(r[10]), cont40: num(r[11]), lcl: num(r[12]), ocs: num(r[13]), perBox: num(r[22]) };
+    const o = out[m[1]];
+    if (!o) out[m[1]] = x;   // サイズ違い（ADS002-M／-L）は1つ目を使い、入数は小さい方（箱数を少なく見積もらないため）
+    else if (x.perBox > 0 && (!o.perBox || x.perBox < o.perBox)) o.perBox = x.perBox;
+  }
+  return out;
 }

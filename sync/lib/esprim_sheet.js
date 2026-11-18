@@ -2,6 +2,7 @@
 //   タブ「エスプリム在庫」… 生産中の発注ロットごとの状態・箱数・CBM・輸送手段の推奨。毎回書き直す（手入力の列は発注ロットごとに残す）
 //   タブ「未判定」      … 状態の報告らしいが、商品や発注に結び付けられなかったメッセージ
 //   タブ「辞書」        … チャットでの呼び名 → 品番3桁（人が足す。ここは書き換えない）
+//   タブ「参考_入力」「参考_原価」 … IMPORTRANGE で取り込んだ参考データ（読むだけ。書き換えない）
 //   出力先のスプレッドシートを、このシステムのサービスアカウントに「編集者」で共有しておく（在庫計算書と同じ）
 import { JWT } from "google-auth-library";
 import fs from "node:fs";
@@ -14,11 +15,11 @@ const COLS = HEADER.length;                                   // A〜Y
 const KEEP = { over: 2, b1: 15, b2: 16, b3: 17, note: 21 };   // 手入力の列（更新しても残す）
 const FALLBACK = { boxes: 9, cbm: 10, perBox: 11 };           // チャットから取れなかった時は、シートに手入力した値を残す
 
-function client() {
+export function sheetsClient(scope = "https://www.googleapis.com/auth/spreadsheets") {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT || (fs.existsSync("./serviceAccount.json") ? fs.readFileSync("./serviceAccount.json", "utf8") : "");
   if (!raw) throw new Error("サービスアカウントがありません");
   const sa = JSON.parse(raw);
-  const jwt = new JWT({ email: sa.client_email, key: sa.private_key, scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
+  const jwt = new JWT({ email: sa.client_email, key: sa.private_key, scopes: [scope] });
   return async (method, path, body) => {
     const { token } = await jwt.getAccessToken();
     const res = await fetch(API + path, { method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
@@ -31,7 +32,7 @@ const enc = encodeURIComponent, q = (t) => `'${t.replace(/'/g, "''")}'`;
 
 // シートを開く。無いタブは作る。辞書と、手入力の列の今の値を読む
 export async function openSheet(sheetId) {
-  const call = client();
+  const call = sheetsClient();
   const meta = await call("GET", `${sheetId}?fields=sheets.properties`);
   const tabs = {}; for (const s of meta.sheets || []) tabs[s.properties.title] = s.properties;
   const need = Object.values(TAB).filter((t) => !tabs[t]);
@@ -57,9 +58,9 @@ export async function openSheet(sheetId) {
 }
 
 // rows = [{key, room, stage, date, folder, name, remain, items, arrive, boxes, cbm, perBox, rec, recDetail, minDays, text, at}]
-export async function writeSheet(sh, { rows, unknown, now, cap }) {
+export async function writeSheet(sh, { rows, unknown, now, cap, basis }) {
   const { call, sheetId, tabs, keep } = sh;
-  const values = [["エスプリム在庫（チャットから自動更新）", "", `更新 ${now}`, "", "", "", "", "", "", "", "", "", "", "", "",
+  const values = [["エスプリム在庫（チャットから自動更新）", "", `更新 ${now}`, basis || "", "", "", "", "", "", "", "", "", "", "", "",
     "40HQ（CBM）", cap, "今回 計→", `=SUM(S3:S)`, `=SUM(T3:T)`, `=SUM(U3:U)`, "", "", "", ""], HEADER];
   rows.forEach((x, i) => {
     const r = i + 3, k = keep[x.key] || {};

@@ -7,19 +7,23 @@
 //   ※ チャットの本文・品番・数量は実行ログに出さない（このリポジトリは公開で、実行ログは誰でも見られる）。ログは件数だけ
 //   ※ Firestore の読み書きは 1 回あたり 読み取り約6〜10件・書き込み1件（まとめ文書 cache/* を使う）
 // 設定: Firestore settings/chatSync（公開リポジトリにルームID・シートIDを書かないため）
-//   { rooms: [{id, label}], sheetId, notifyRoomId?, lclDays?, containerDays?, containerCbm? }
+//   { rooms: [{id, label}], sheetId, notifyRoomId?, containerCbm?,
+//     leadSheet?: {id, range}  … 発注・入庫の入力シート（出荷日 I・入庫日 J・輸送会社 L）。輸送方法ごとの日数（直近180日の80%値）を出す
+//     costSheet?: {id, range}  … 原価シート（40ft L・混載便 M・OCS N・国際入数 W）。1個あたりの送料差と入数に使う
+//     lclWait?, containerWait? … 混載便・コンテナの出荷待ちの日数（既定 3・7）。lclDays/containerDays は入力シートが読めない時の日数 }
+//   参考シートはこのシステムのサービスアカウントに「閲覧者」で共有しておく（読むだけ）
 // 鍵:   CHATWORK_API_TOKEN（GitHub Secret）／ FIREBASE_SERVICE_ACCOUNT（daily-sync と同じ）
 // 使い方: node chat_sync.js [--dry-run]
 //         node chat_sync.js --setup --sheet=<スプレッドシートID> --rooms=<ルームID>:<担当>,<ルームID>:<担当>…   （設定を保存するだけ）
 import { fetchMessages, postMessage, newerId } from "./lib/chatwork.js";
-import { parseMessage, buildIndex, buildLots, resolveLot, recommend, STAGES, AT_ESPRIM } from "./lib/esprim.js";
+import { parseMessage, buildIndex, buildLots, resolveLot, recommend, leadTimes, costTable, STAGES, AT_ESPRIM } from "./lib/esprim.js";
 import { openSheet, writeSheet } from "./lib/esprim_sheet.js";
 import { initFirestore, readSnapshotProducts } from "./lib/firestore.js";
 
 const DRY = process.argv.includes("--dry-run");
 const arg = (name) => { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? a.slice(name.length + 3) : ""; };
 const jst = (ms) => new Date(ms + 9 * 3600000).toISOString().slice(0, 16).replace("T", " ");
-const DEF = { lclDays: 20, containerDays: 40, containerCbm: 68 };   // 仮の値。混載便・コンテナで売り場に並ぶまでの日数（担当者に確認して settings/chatSync で直す）
+const DEF = { lclDays: 16, containerDays: 29, lclWait: 3, containerWait: 7, containerCbm: 68 };   // lclDays/containerDays は入力シートが読めない時の日数（2026-11 の実績: 混載13＋3・コンテナ22＋7）
 
 // 生産中の発注（まとめ文書＋その後に画面で変わった分。画面と同じ読み方で、読み取りを数件に抑える）
 async function readOpenOrders(db, meta) {
@@ -40,9 +44,17 @@ async function readOpenOrders(db, meta) {
 async function setup(db) {
   const rooms = arg("rooms").split(",").map((x) => x.trim()).filter(Boolean).map((x) => { const [id, label] = x.split(":"); return { id: id.trim(), label: (label || "").trim() }; });
   const patch = {}; if (rooms.length) patch.rooms = rooms; if (arg("sheet")) patch.sheetId = arg("sheet"); if (arg("notify")) patch.notifyRoomId = arg("notify");
-  if (!Object.keys(patch).length) throw new Error("--sheet= か --rooms= を指定してください");
+  if (arg("lead")) patch.leadSheet = { id: arg("lead"), range: "入力シート!A2:L" };
+  if (arg("cost")) patch.costSheet = { id: arg("cost"), range: "原価!A3:W" };
+  // --refs=here … 参考シートを共有せず、エスプリム在庫シートのタブ「参考_入力」「参考_原価」（IMPORTRANGE で取り込んだもの）から読む
+  if (arg("refs") === "here") {
+    const id = patch.sheetId || ((await db.collection("settings").doc("chatSync").get()).data() || {}).sheetId;
+    if (!id) throw new Error("先に --sheet= でエスプリム在庫シートを登録してください");
+    patch.leadSheet = { id, range: "参考_入力!A1:L" }; patch.costSheet = { id, range: "参考_原価!A1:W" };
+  }
+  if (!Object.keys(patch).length) throw new Error("--sheet= / --rooms= / --lead= / --cost= / --refs=here / --notify= のどれかを指定してください");
   await db.collection("settings").doc("chatSync").set({ ...patch, updatedAt: new Date() }, { merge: true });
-  console.log(`[chat] 設定を保存しました（ルーム ${rooms.length || "変更なし"}・シート ${patch.sheetId ? "あり" : "変更なし"}）`);
+  console.log(`[chat] 設定を保存しました（${Object.keys(patch).join("・")}）`);
 }
 
 async function main() {
@@ -61,6 +73,15 @@ async function main() {
 
   const sh = cfg.sheetId ? await openSheet(cfg.sheetId) : null;
   const index = buildIndex(products, sh ? sh.aliases : {});
+
+  // 参考シート（輸送日数・送料・入数）。読めなくても続ける
+  let lead = {}, costs = {};
+  const readRange = async (ref, def) => { const r = await sh.call("GET", `${ref.id}/values/${encodeURIComponent(ref.range || def)}`); return r.values || []; };
+  if (sh && cfg.leadSheet && cfg.leadSheet.id) try { lead = leadTimes(await readRange(cfg.leadSheet, "入力シート!A2:L")); } catch (e) { console.error("[chat] 入力シート（輸送日数）を読めません（続行）:", e.message); }
+  if (sh && cfg.costSheet && cfg.costSheet.id) try { costs = costTable(await readRange(cfg.costSheet, "原価!A3:W")); } catch (e) { console.error("[chat] 原価シートを読めません（続行）:", e.message); }
+  if (lead.lcl) cfg.lclDays = lead.lcl.p80 + cfg.lclWait;
+  if (lead.container) cfg.containerDays = lead.container.p80 + cfg.containerWait;
+  const basis = `推奨の基準: OCS ${lead.ocs ? lead.ocs.p80 + "日" : "-"}／混載便 ${lead.lcl ? `${lead.lcl.p80}日＋出荷待ち${cfg.lclWait}日` : cfg.lclDays + "日（仮）"}／コンテナ ${lead.container ? `${lead.container.p80}日＋出荷待ち${cfg.containerWait}日` : cfg.containerDays + "日（仮）"}（入力シートの直近180日・80%値）`;
 
   // 1) 新しいメッセージ（前回の続きは message_id で判定）＋ 前回までの未判定（辞書が増えていれば拾える）
   const events = [], unknown = []; let fetched = 0, fresh = 0, failed = 0;
@@ -100,10 +121,11 @@ async function main() {
   const rows = [];
   for (const lot of Object.values(lots)) {
     const s = state.lots[lot.key] || { stage: "生産中" }, k = (sh && sh.keep[lot.key]) || {}, b = state.box[lot.folder] || {};
-    const stage = String(k.over || "").trim() || s.stage, perBox = Number(b.perBox) || Number(k.perBox) || 0;
+    const c = costs[lot.folder];
+    const stage = String(k.over || "").trim() || s.stage, perBox = Number(b.perBox) || Number(k.perBox) || (c && c.perBox) || 0;   // 入数: チャット → 手入力 → 原価シートの国際入数
     let boxes = s.boxes || 0, cbm = s.cbm || 0;
     if (!boxes && perBox && AT_ESPRIM.has(stage)) { boxes = Math.ceil(lot.remain / perBox); if (b.boxCbm) cbm = Math.round(boxes * b.boxCbm * 100) / 100; }   // 報告が無ければ 残数÷入数 の目安
-    const rec = AT_ESPRIM.has(stage) ? recommend(lot, products, cfg, perBox) : null;
+    const rec = AT_ESPRIM.has(stage) ? recommend(lot, products, cfg, perBox, c) : null;
     rows.push({ key: lot.key, room: s.room || "", stage, date: lot.date, folder: lot.folder, name: lot.name, remain: lot.remain,
       items: lot.items.map((i) => `${i.vari || i.code} ${i.remain}`).join("、"),
       arrive: stage === "到着予定" ? (s.eta ? `${s.eta.slice(5).replace("-", "/")} 予定` : "") : (s.arrive || "").slice(5).replace("-", "/"),
@@ -121,11 +143,11 @@ async function main() {
   for (const key of Object.keys(state.lots)) if (!lots[key] && Date.now() - (state.lots[key].upd || 0) > 45 * 86400000) delete state.lots[key];
 
   const count = {}; for (const r of rows) count[r.stage] = (count[r.stage] || 0) + 1;
-  const summary = `メッセージ ${fetched}件（新規 ${fresh}）／ 報告 ${applied}件を反映 ／ 未判定 ${state.unknown.length}件 ／ 発注ロット ${rows.length}件（${Object.entries(count).map(([k, v]) => `${k}${v}`).join("・")}）／ 推奨 OCS ${rows.filter((r) => r.rec === "OCS").length}・混載便 ${rows.filter((r) => r.rec === "混載便").length}`;
+  const summary = `参考シート 輸送日数${Object.keys(lead).length ? "あり" : "なし"}・原価${Object.keys(costs).length ? Object.keys(costs).length + "品番" : "なし"} ／ メッセージ ${fetched}件（新規 ${fresh}）／ 報告 ${applied}件を反映 ／ 未判定 ${state.unknown.length}件 ／ 発注ロット ${rows.length}件（${Object.entries(count).map(([k, v]) => `${k}${v}`).join("・")}）／ 推奨 OCS ${rows.filter((r) => r.rec === "OCS").length}・混載便 ${rows.filter((r) => r.rec === "混載便").length}`;
   if (DRY) { console.log(`[chat] ${summary}`); console.log("[chat] DRY-RUN のため書き込みなし"); return; }
 
   // 4) 書き出し・通知・状態の保存
-  if (sh) await writeSheet(sh, { rows, unknown: state.unknown.map((u) => ({ ...u, at: jst(u.time * 1000) })), now: jst(Date.now()), cap: cfg.containerCbm });
+  if (sh) await writeSheet(sh, { rows, unknown: state.unknown.map((u) => ({ ...u, at: jst(u.time * 1000) })), now: jst(Date.now()), cap: cfg.containerCbm, basis });
   const alerts = rows.filter((r) => r._new && r._rec && r._rec.mode > 0);
   let notified = 0;
   if (cfg.notifyRoomId && alerts.length) {

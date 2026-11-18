@@ -1,6 +1,6 @@
 // 判定の確認（実際の書き方をもとにした例）。node chat_parse_test.js
 import assert from "node:assert/strict";
-import { parseMessage, buildIndex, buildLots, resolveLot, recommend, cleanBody } from "./lib/esprim.js";
+import { parseMessage, buildIndex, buildLots, resolveLot, recommend, cleanBody, leadTimes, costTable } from "./lib/esprim.js";
 
 const P = (name, o = {}) => ({ name, vari: "", office: 0, warehouse: 0, fba: 0, rsl: 0, transit: 0, monthly: 0, ...o });
 const products = {
@@ -82,4 +82,14 @@ assert.ok(resolveLot({ folder: "002", orderDate: "2026-10-08" }, lots).reason); 
 const rec = recommend(lots["2026-10-01|090"], products, { lclDays: 20, containerDays: 40 }, 120);
 assert.equal(rec.label, "OCS");
 assert.deepEqual(rec.rows.map((x) => [x.code, x.mode, x.qty, x.days]), [["ADS090C", 2, 240, 0], ["ADS090F", 2, 240, 5], ["ADS090A", 1, 120, 35]]);
-console.log("OK: 判定の確認 8件");
+
+// 9) 参考シート: 輸送日数（80%値・直近180日・5件以上）と原価（品番3桁・サイズ違いは入数の小さい方）
+const L = (co, a, b) => ["", "", "", "", "", "", "", "", a, b, "", co];
+const lt = leadTimes([...Array(10)].map((_, i) => L("海源", "2026/10/01", `2026/10/${10 + i}`)).concat([...Array(5)].map(() => L("OCS", "2026/11/01", "2026/11/06")), [L("海源コンテナ", "2026/11/01", "2026/11/20")], [L("海源", "2025/01/01", "2025/03/01")]), Date.UTC(2026, 10, 18));
+assert.deepEqual(lt, { ocs: { p80: 5, n: 5 }, lcl: { p80: 17, n: 10 } });
+const C = (code, c40, lcl, ocs, w) => { const r = Array(23).fill(""); r[0] = code; r[11] = c40; r[12] = lcl; r[13] = ocs; r[22] = w; return r; };
+const ct = costTable([C("ADS002-M", "17 ", "22 ", "", "70 "), C("ADS002-L", "20", "27", "", "60"), C("ADS007", "ー", "66", "127", "45"), ["型番"]]);
+assert.deepEqual(ct["002"], { cont20: 0, cont40: 17, lcl: 22, ocs: 0, perBox: 60 }); assert.equal(ct["007"].ocs, 127);
+const rec2 = recommend(lots["2026-10-01|090"], products, { lclDays: 20, containerDays: 40 }, 120, { cont40: 10, lcl: 30, ocs: 0 });
+assert.match(rec2.detail, /OCS料金未登録/); assert.match(rec2.detail, /混載 ブラック 120個.*コンテナ比 \+¥2,400/);
+console.log("OK: 判定の確認 9件");
