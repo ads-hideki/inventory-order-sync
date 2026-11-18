@@ -15,6 +15,7 @@
 //     costSheet?: {id, range}  … 原価シート（40ft L・混載便 M・OCS N・国際入数 W）。1個あたりの送料差と入数に使う
 //     containerTabs?: [{range, room}] … エスプリムのコンテナ計算シート（担当ごとのタブを IMPORTRANGE で取り込んだもの）
 //     sheetOnlyRows?: false … チャットに出てこない商品を、コンテナ計算シートだけを根拠に載せない（既定は載せる。出所「シート」）
+//     safetyDays? … 欠品しないための余裕の日数（既定 3）。OCS は「混載便が届くまで＋余裕」、混載便は「コンテナが届くまで＋余裕」の分
 //     lclWait?, containerWait? … 混載便・コンテナの出荷待ちの日数（既定 3・7）。lclDays/containerDays は入力シートが読めない時の日数 }
 //   参考シートはエスプリム在庫シートのタブ「参考_*」に IMPORTRANGE で取り込み、そこから読む（--setup --refs=here）
 // 鍵:   CHATWORK_API_TOKEN（GitHub Secret）／ FIREBASE_SERVICE_ACCOUNT（daily-sync と同じ）
@@ -30,7 +31,7 @@ import { initFirestore, readSnapshotProducts } from "./lib/firestore.js";
 const DRY = process.argv.includes("--dry-run");
 const arg = (name) => { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? a.slice(name.length + 3) : ""; };
 const jst = (ms) => new Date(ms + 9 * 3600000).toISOString().slice(0, 16).replace("T", " ");
-const DEF = { lclDays: 16, containerDays: 29, lclWait: 3, containerWait: 7, containerCbm: 68 };   // lclDays/containerDays は入力シートが読めない時の日数（2026-11 の実績: 混載13＋3・コンテナ22＋7）
+const DEF = { lclDays: 16, containerDays: 29, lclWait: 3, containerWait: 7, containerCbm: 68, safetyDays: 3 };   // safetyDays: 欠品しないための余裕（日）   // lclDays/containerDays は入力シートが読めない時の日数（2026-11 の実績: 混載13＋3・コンテナ22＋7）
 
 // 生産中の発注（まとめ文書＋その後に画面で変わった分。画面と同じ読み方で、読み取りを数件に抑える）
 async function readOpenOrders(db, meta) {
@@ -94,7 +95,8 @@ async function main() {
   const index = buildIndex(products, { ...cnames, ...(sh ? sh.aliases : {}) });
   if (lead.lcl) cfg.lclDays = lead.lcl.p80 + cfg.lclWait;
   if (lead.container) cfg.containerDays = lead.container.p80 + cfg.containerWait;
-  const basis = `推奨の基準: OCS ${lead.ocs ? lead.ocs.p80 + "日" : "-"}／混載便 ${lead.lcl ? `${lead.lcl.p80}日＋出荷待ち${cfg.lclWait}日` : cfg.lclDays + "日（仮）"}／コンテナ ${lead.container ? `${lead.container.p80}日＋出荷待ち${cfg.containerWait}日` : cfg.containerDays + "日（仮）"}（入力シートの直近180日・80%値）`;
+  if (lead.ocs) cfg.ocsDays = lead.ocs.p80;
+  const basis = `推奨の基準: OCS ${lead.ocs ? lead.ocs.p80 + "日" : "-"}／混載便 ${lead.lcl ? `${lead.lcl.p80}日＋出荷待ち${cfg.lclWait}日` : cfg.lclDays + "日（仮）"}／コンテナ ${lead.container ? `${lead.container.p80}日＋出荷待ち${cfg.containerWait}日` : cfg.containerDays + "日（仮）"}（入力シートの直近180日・80%値）＋余裕${cfg.safetyDays}日`;
 
   // 1) 新しいメッセージ（前回の続きは message_id で判定）＋ 前回までの未判定（辞書が増えていれば拾える）
   const events = [], unknown = [], leadReplies = []; let fetched = 0, fresh = 0, failed = 0;
@@ -189,7 +191,7 @@ async function main() {
     rows.push({ key, room: s.room || (sl && sl.room) || "", stage, date: date === "日付不明" ? "" : date, folder, name: (lot && lot.name) || folderName(folder), remain: qty || "",
       items: lot ? lot.items.map((i) => `${i.vari || i.code} ${i.remain}`).join("、") : "",
       arrive: (s.arrive || "").slice(5).replace("-", "/"), boxes, cbm, perBox,
-      rec: rec ? rec.label : "", recDetail: rec ? (rec.office !== "UF在庫" ? `【${rec.office}：コンテナ不可】\n` : "") + rec.detail : "", minDays: rec ? rec.minDays : null,
+      rec: rec ? rec.label : "", recSummary: rec ? rec.summary : "", recDetail: rec ? (rec.office !== "UF在庫" ? `【${rec.office}：コンテナ不可】\n` : "") + rec.detail : "", minDays: rec ? rec.minDays : null,
       source: [fromChat ? "チャット" : "", sl ? "シート" : "", lot ? "" : "（一元管理に発注なし）"].filter(Boolean).join("＋").replace("＋（", "（"),
       sheet: sl ? sl.parts.join("\n") : "", text: s.text || (sl ? sl.text : ""), at: s.time ? jst(s.time * 1000) : "", _rec: rec, _new: arrived.has(key) });
   }
