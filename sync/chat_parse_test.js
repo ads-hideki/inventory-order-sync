@@ -116,4 +116,8 @@ assert.deepEqual(r.leads.map((l) => [l.folder, l.days]), [["035", 35]]); assert.
 // 11) 在庫がマイナスの倉庫は 0 として数える
 const neg = recommend({ items: [{ code: "ADS090A", vari: "ブラック", remain: 300 }] }, { ADS090A: { office: -159, fba: 0, monthly: 300, transit: 0 } }, { lclDays: 20, containerDays: 40 }, 120);
 assert.equal(neg.rows[0].stock, 0); assert.equal(neg.rows[0].days, 0);
-console.log("OK: 判定の確認 11件");
+
+// 12) UF出荷依頼の未着は在庫がもつ日数に足す（UF→FBA・RSL に送った直後でも OCS にしない）
+const un = recommend({ items: [{ code: "ADS090A", vari: "ブラック", remain: 300 }] }, { ADS090A: { warehouse: 0, fba: 10, unarrived: 600, monthly: 300 } }, { lclDays: 20, containerDays: 40 }, 120);
+assert.equal(un.rows.length, 0); assert.equal(un.label, "コンテナ");
+console.log("OK: 判定の確認 12件");

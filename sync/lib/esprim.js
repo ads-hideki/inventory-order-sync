@@ -181,9 +181,11 @@ export function recommend(lot, products, cfg, perBox, cost, groups = {}) {
     const p = products[it.code]; if (!p) continue;
     const office = groups[it.code] === "事務所在庫"; items++; if (office) offices++;
     // 在庫がマイナスの倉庫（事務所在庫の引き当て超過など）は 0 として数える（マイナスのまま足すと日数がマイナスになり OCS が膨らむ）
+    //   未着（unarrived）= UF出荷依頼で UF から FBA・RSL へ送って、まだ着いていない分（一元管理の rp_inbound）。週2回の出荷で UF 在庫が大きく減っても、ここで足し戻す
     const stock = ["office", "warehouse", "fba", "rsl"].reduce((s, k) => s + Math.max(0, Number(p[k]) || 0), 0), transit = Math.max(0, Number(p.transit) || 0);
+    const unarrived = Math.max(0, Number(p.unarrived) || 0);
     const daily = (Number(p.demand) || Number(p.monthly) || 0) / 30;
-    const days = daily > 0 ? (stock + transit) / daily : Infinity;
+    const days = daily > 0 ? (stock + unarrived + transit) / daily : Infinity;
     const box = (q) => (perBox > 0 ? Math.ceil(q / perBox) * perBox : q);
     // OCS は「混載便が届くまで＋安全日数」の分だけ。混載便は「コンテナが届くまで＋安全日数」の分。残りがコンテナ（事務所在庫は残りも混載便）
     const safe = Number(cfg.safetyDays) || 0, lclTo = cfg.lclDays + safe, contTo = cfg.containerDays + safe;
@@ -199,8 +201,8 @@ export function recommend(lot, products, cfg, perBox, cost, groups = {}) {
     const d = isFinite(days) ? Math.floor(days) : null;
     tot.ocs += ocsQty; tot.lcl += lclQty; tot.cont += contQty;
     per.push({ code: it.code, vari: it.vari || "", remain: isFinite(cap) ? cap : null, ocs: ocsQty, lcl: lclQty, cont: contQty, days: isFinite(days) ? Math.floor(days) : null, office, gap });
-    if (ocsQty > 0) rows.push({ code: it.code, vari: it.vari, mode: 2, qty: ocsQty, stock, transit, days: d, office, gap, extra: extra(ocsQty, cost && cost.ocs), noCost: !!cost && !(cost.ocs > 0) });
-    if (lclQty > 0 && (!office || ocsQty > 0 || days < cfg.containerDays)) rows.push({ code: it.code, vari: it.vari, mode: 1, qty: lclQty, stock, transit, days: d, office, extra: office ? 0 : extra(lclQty, cost && cost.lcl) });
+    if (ocsQty > 0) rows.push({ code: it.code, vari: it.vari, mode: 2, qty: ocsQty, stock, unarrived, transit, days: d, office, gap, extra: extra(ocsQty, cost && cost.ocs), noCost: !!cost && !(cost.ocs > 0) });
+    if (lclQty > 0 && (!office || ocsQty > 0 || days < cfg.containerDays)) rows.push({ code: it.code, vari: it.vari, mode: 1, qty: lclQty, stock, unarrived, transit, days: d, office, extra: office ? 0 : extra(lclQty, cost && cost.lcl) });
     if (ocsQty > 0) worst = 2; else if (lclQty > 0 && !office) worst = Math.max(worst, 1);
   }
   const allOffice = items > 0 && offices === items;
@@ -208,7 +210,7 @@ export function recommend(lot, products, cfg, perBox, cost, groups = {}) {
   rows.sort((a, b) => b.mode - a.mode || (a.days ?? 1e9) - (b.days ?? 1e9));
   const label = worst === 2 ? "OCS" : worst === 1 ? "混載便" : "コンテナ";
   const dest = (r) => (r.mode === 2 ? "OCS→事務所" : r.office ? "混載→事務所" : "混載→UF");
-  const detail = rows.map((r) => `${dest(r)} ${r.vari || r.code} ${r.qty}個（在庫${r.stock}${r.transit ? "＋輸送中" + r.transit : ""}${r.days != null ? "・あと" + r.days + "日" : ""}` +
+  const detail = rows.map((r) => `${dest(r)} ${r.vari || r.code} ${r.qty}個（在庫${r.stock}${r.unarrived ? "＋未着" + r.unarrived : ""}${r.transit ? "＋輸送中" + r.transit : ""}${r.days != null ? "・あと" + r.days + "日" : ""}` +
     (r.extra > 0 ? `・${r.office && r.mode === 2 ? "混載比" : "コンテナ比"} +${yen(r.extra)}` : r.mode === 2 && r.noCost ? "・OCS料金未登録" : "") + "）" +
     (r.gap > 0 ? `\n　⚠ OCSでも届くまで約${r.gap}日欠品の見込み` : "")).join("\n");
   const extraTotal = rows.reduce((s, r) => s + (r.extra || 0), 0);

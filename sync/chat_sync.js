@@ -80,6 +80,13 @@ async function main() {
   const meta = (await db.collection("cache").doc("meta").get()).data() || {};
   const products = (await readSnapshotProducts(db, meta)).items;
   const lots = buildLots(await readOpenOrders(db, meta), products);
+  // UF出荷依頼の未着（UF → FBA・RSL に送ってまだ着いていない分）。在庫がもつ日数に足す（読み取りは未着の件数ぶん）
+  let unarrivedN = 0;
+  try {
+    const ib = await db.collection("rp_inbound").where("status", "in", ["in_transit", "partial", "candidate"]).get();
+    ib.forEach((d) => { const x = d.data(), c = String(x.code || "").toUpperCase(), q = Math.max(0, (Number(x.qty) || 0) - (Number(x.receivedQty) || 0));
+      if (products[c] && q > 0) { products[c] = { ...products[c], unarrived: (products[c].unarrived || 0) + q }; unarrivedN++; } });
+  } catch (e) { console.error("[chat] UF出荷依頼の未着を読めません（続行）:", e.message); }
 
   const sh = cfg.sheetId ? await openSheet(cfg.sheetId) : null;
 
@@ -223,7 +230,7 @@ async function main() {
   for (const k2 of Object.keys(eta)) if (!lots[k2]) delete eta[k2];
 
   const count = {}; for (const r of rows) count[r.stage] = (count[r.stage] || 0) + 1;
-  const summary = `参考シート 輸送日数${Object.keys(lead).length ? "あり" : "なし"}・原価${Object.keys(costs).length ? Object.keys(costs).length + "品番" : "なし"}・コンテナ計算 ${sheetItems}行（品番不明 ${sheetUnknown.length}）・teps-2 事務所在庫 ${Object.values(groups).filter((g) => g === "事務所在庫").length}品 ／ メッセージ ${fetched}件（新規 ${fresh}）／ 報告 ${applied}件・納期 ${leadReplies.length}件 ／ エスプリム在庫 ${rows.length}件（${Object.entries(count).map(([k2, v]) => `${k2}${v}`).join("・")}・一元管理で出荷済み ${shippedOut}）／ 生産管理 ${prodRows.length}件 ／ 未判定 ${state.unknown.length + sheetUnknown.length}件 ／ 推奨 OCS ${rows.filter((r) => r.rec === "OCS").length}・混載便 ${rows.filter((r) => r.rec === "混載便").length}`;
+  const summary = `参考シート 輸送日数${Object.keys(lead).length ? "あり" : "なし"}・原価${Object.keys(costs).length ? Object.keys(costs).length + "品番" : "なし"}・コンテナ計算 ${sheetItems}行（品番不明 ${sheetUnknown.length}）・teps-2 事務所在庫 ${Object.values(groups).filter((g) => g === "事務所在庫").length}品・UF出荷の未着 ${unarrivedN}件 ／ メッセージ ${fetched}件（新規 ${fresh}）／ 報告 ${applied}件・納期 ${leadReplies.length}件 ／ エスプリム在庫 ${rows.length}件（${Object.entries(count).map(([k2, v]) => `${k2}${v}`).join("・")}・一元管理で出荷済み ${shippedOut}）／ 生産管理 ${prodRows.length}件 ／ 未判定 ${state.unknown.length + sheetUnknown.length}件 ／ 推奨 OCS ${rows.filter((r) => r.rec === "OCS").length}・混載便 ${rows.filter((r) => r.rec === "混載便").length}`;
   if (DRY) { console.log(`[chat] ${summary}`); console.log("[chat] DRY-RUN のため書き込みなし"); return; }
 
   // 4) 書き出し・通知・状態の保存
