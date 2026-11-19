@@ -175,7 +175,7 @@ export function resolveLot(ev, lots) {
 //     UF在庫:   混載便でも間に合わない分 → OCS（事務所宛） ／ コンテナだと間に合わない分 → 混載便 ／ それ以外 → コンテナ
 //     事務所在庫: 混載便でも間に合わない分 → OCS（事務所宛） ／ 残りは全部 → 混載便（事務所宛）
 export function recommend(lot, products, cfg, perBox, cost, groups = {}) {
-  const rows = []; let worst = 0, offices = 0, items = 0; const tot = { ocs: 0, lcl: 0, cont: 0 };
+  const rows = [], per = []; let worst = 0, offices = 0, items = 0; const tot = { ocs: 0, lcl: 0, cont: 0 };   // per = 型番ごとの OCS／混載便／コンテナ の数（アプリのコンテナ計算用）
   const yen = (n) => "¥" + n.toLocaleString("ja-JP");
   for (const it of lot.items) {
     const p = products[it.code]; if (!p) continue;
@@ -186,16 +186,18 @@ export function recommend(lot, products, cfg, perBox, cost, groups = {}) {
     const box = (q) => (perBox > 0 ? Math.ceil(q / perBox) * perBox : q);
     // OCS は「混載便が届くまで＋安全日数」の分だけ。混載便は「コンテナが届くまで＋安全日数」の分。残りがコンテナ（事務所在庫は残りも混載便）
     const safe = Number(cfg.safetyDays) || 0, lclTo = cfg.lclDays + safe, contTo = cfg.containerDays + safe;
+    const cap = it.remain == null ? Infinity : it.remain;                                   // 数量が分からない時（一元管理に発注なし）は上限なし・コンテナ分は出さない
     let ocsQty = 0, lclQty = 0;
-    if (days < lclTo) ocsQty = Math.min(box(Math.ceil(daily * (lclTo - days))), it.remain);
-    if (office) lclQty = Math.max(0, it.remain - ocsQty);                                   // 事務所在庫は残りを全部 混載便
-    else if (days < contTo) lclQty = Math.min(box(Math.ceil(daily * (contTo - Math.max(days, lclTo)))), it.remain - ocsQty);
-    const contQty = office ? 0 : Math.max(0, it.remain - ocsQty - lclQty);
+    if (days < lclTo) ocsQty = Math.min(box(Math.ceil(daily * (lclTo - days))), cap);
+    if (office) lclQty = isFinite(cap) ? Math.max(0, cap - ocsQty) : 0;                    // 事務所在庫は残りを全部 混載便
+    else if (days < contTo) lclQty = Math.min(box(Math.ceil(daily * (contTo - Math.max(days, lclTo)))), cap - ocsQty);
+    const contQty = office || !isFinite(cap) ? 0 : Math.max(0, cap - ocsQty - lclQty);
     const gap = cfg.ocsDays && days < cfg.ocsDays ? Math.ceil(cfg.ocsDays - days) : 0;   // OCS でも届くまでに欠品する日数の目安
     const base = cost ? (office ? cost.lcl : cost.cont40 || cost.lcl) : 0;               // 送料差の基準: 事務所在庫は混載便、UF在庫はコンテナ（40ft）
     const extra = (q, unit) => (q > 0 && unit > 0 && base > 0 && unit > base ? Math.round((unit - base) * q) : 0);
     const d = isFinite(days) ? Math.floor(days) : null;
     tot.ocs += ocsQty; tot.lcl += lclQty; tot.cont += contQty;
+    per.push({ code: it.code, vari: it.vari || "", remain: isFinite(cap) ? cap : null, ocs: ocsQty, lcl: lclQty, cont: contQty, days: isFinite(days) ? Math.floor(days) : null, office, gap });
     if (ocsQty > 0) rows.push({ code: it.code, vari: it.vari, mode: 2, qty: ocsQty, stock, transit, days: d, office, gap, extra: extra(ocsQty, cost && cost.ocs), noCost: !!cost && !(cost.ocs > 0) });
     if (lclQty > 0 && (!office || ocsQty > 0 || days < cfg.containerDays)) rows.push({ code: it.code, vari: it.vari, mode: 1, qty: lclQty, stock, transit, days: d, office, extra: office ? 0 : extra(lclQty, cost && cost.lcl) });
     if (ocsQty > 0) worst = 2; else if (lclQty > 0 && !office) worst = Math.max(worst, 1);
@@ -212,8 +214,8 @@ export function recommend(lot, products, cfg, perBox, cost, groups = {}) {
   const ds = rows.map((r) => r.days).filter((x) => x != null);
   // 推奨の欄に出す内訳の合計（例: OCS 140／混載便 140／コンテナ 20）
   const summary = [tot.ocs ? `OCS ${tot.ocs}` : "", tot.lcl ? `混載便 ${tot.lcl}` : "", tot.cont ? `コンテナ ${tot.cont}` : ""].filter(Boolean).join("／") || label;
-  if (allOffice && !rows.length) return { mode: worst, label, summary, detail: "全数 混載→事務所（在庫は足りている）", rows, minDays: null, extraTotal: 0, office: "事務所在庫" };
-  return { mode: worst, label, summary, detail, rows, minDays: ds.length ? Math.min(...ds) : null, extraTotal, office: allOffice ? "事務所在庫" : offices ? "一部 事務所在庫" : "UF在庫" };
+  if (allOffice && !rows.length) return { mode: worst, label, summary, detail: "全数 混載→事務所（在庫は足りている）", rows, per, tot, minDays: null, extraTotal: 0, office: "事務所在庫" };
+  return { mode: worst, label, summary, detail, rows, per, tot, minDays: ds.length ? Math.min(...ds) : null, extraTotal, office: allOffice ? "事務所在庫" : offices ? "一部 事務所在庫" : "UF在庫" };
 }
 
 // 参考データ（Google スプレッドシート。人が管理しているものを読むだけ）

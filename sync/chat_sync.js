@@ -7,6 +7,7 @@
 //      teps-2 のグループが「事務所在庫」の商品はコンテナを使わない（混載便か OCS）。OCS の行き先はいつも事務所
 //      タブ「生産管理」    = 一元管理の生産中のうち、まだエスプリムに無いもの。到着予定（チャットの到着予定 → 納期の回答 → リードタイム目安）
 //   5) 設定があれば、新しく到着した低在庫の商品を Chatwork に通知する
+//   6) コンテナ計算アプリ（esprim-container）用に Firestore esprim/stock・esprim/prod を書く（書き込み2件）
 //   ※ チャットの本文・品番・数量は実行ログに出さない（このリポジトリは公開で、実行ログは誰でも見られる）。ログは件数だけ
 //   ※ Firestore の読み書きは 1 回あたり 読み取り約6〜10件・書き込み1件（まとめ文書 cache/* を使う）
 // 設定: Firestore settings/chatSync（公開リポジトリにルームID・シートIDを書かないため）
@@ -186,14 +187,16 @@ async function main() {
     const qty = lot ? lot.remain : (s.qty || (sl && sl.qty) || 0);
     let boxes = (sl && sl.boxes) || s.boxes || 0, cbm = (sl && Math.round(sl.cbm * 100) / 100) || s.cbm || 0;
     if (!boxes && perBox && qty) { boxes = Math.ceil(qty / perBox); if (b.boxCbm) cbm = Math.round(boxes * b.boxCbm * 100) / 100; }
-    const recLot = lot || { items: folderCodes(folder).map((x) => ({ ...x, remain: qty || 1e9 })) };
+    const recLot = lot || { items: folderCodes(folder).map((x) => ({ ...x, remain: null })) };   // 一元管理に発注なし＝色別の数は分からない
     const rec = AT_ESPRIM.has(stage) ? recommend(recLot, products, cfg, perBox, c, groups) : null;
     rows.push({ key, room: s.room || (sl && sl.room) || "", stage, date: date === "日付不明" ? "" : date, folder, name: (lot && lot.name) || folderName(folder), remain: qty || "",
       items: lot ? lot.items.map((i) => `${i.vari || i.code} ${i.remain}`).join("、") : "",
       arrive: (s.arrive || "").slice(5).replace("-", "/"), boxes, cbm, perBox,
       rec: rec ? rec.label : "", recSummary: rec ? rec.summary : "", recDetail: rec ? (rec.office !== "UF在庫" ? `【${rec.office}：コンテナ不可】\n` : "") + rec.detail : "", minDays: rec ? rec.minDays : null,
       source: [fromChat ? "チャット" : "", sl ? "シート" : "", lot ? "" : "（一元管理に発注なし）"].filter(Boolean).join("＋").replace("＋（", "（"),
-      sheet: sl ? sl.parts.join("\n") : "", text: s.text || (sl ? sl.text : ""), at: s.time ? jst(s.time * 1000) : "", _rec: rec, _new: arrived.has(key) });
+      sheet: sl ? sl.parts.join("\n") : "", text: s.text || (sl ? sl.text : ""), at: s.time ? jst(s.time * 1000) : "", _rec: rec, _new: arrived.has(key),
+      boxCbm: Number(b.boxCbm) || 0, office: rec ? rec.office : (folderCodes(folder).every((x) => groups[x.code] === "事務所在庫") ? "事務所在庫" : "UF在庫"),
+      colors: rec ? rec.per : (lot ? lot.items.map((i) => ({ code: i.code, vari: i.vari || "", remain: i.remain, ocs: 0, lcl: 0, cont: i.remain })) : []) });
   }
   const order = (st) => ({ "検品待ち": 0, "転送": 0, "検品中": 1, "検品済": 2 }[st] ?? 3);
   rows.sort((a, b) => order(a.stage) - order(b.stage) || (a.rec === b.rec ? 0 : a.rec === "OCS" ? -1 : b.rec === "OCS" ? 1 : a.rec === "混載便" ? -1 : 1) || (a.date < b.date ? -1 : 1));
@@ -227,6 +230,12 @@ async function main() {
   const format = sh && (state.formatVer !== FORMAT_VER || state.formatSheet !== cfg.sheetId || process.argv.includes("--format"));
   if (sh) await writeSheet(sh, { rows, prodRows, unknown: state.unknown.map((u) => ({ ...u, at: jst(u.time * 1000) })).concat(sheetUnknown), now: jst(Date.now()), cap: cfg.containerCbm, basis, format });
   if (format) { state.formatVer = FORMAT_VER; state.formatSheet = cfg.sheetId; }
+  // コンテナ計算アプリ用（esprim/stock・esprim/prod の2文書。アプリはこれを読むだけ）
+  const clean = (o) => JSON.parse(JSON.stringify(o, (k, v) => (k.startsWith("_") || v === undefined ? undefined : v === Infinity ? null : v)));
+  await db.collection("esprim").doc("stock").set({ updatedAt: new Date(), basis, cfg: { lclDays: cfg.lclDays, containerDays: cfg.containerDays, safetyDays: cfg.safetyDays, ocsDays: cfg.ocsDays || null, containerCbm: cfg.containerCbm },
+    lots: clean(rows.map((r) => ({ key: r.key, room: r.room, stage: r.stage, date: r.date, folder: r.folder, name: r.name, qty: r.remain || 0, boxes: r.boxes || 0, cbm: r.cbm || 0, perBox: r.perBox || 0, boxCbm: r.boxCbm,
+      office: r.office, source: r.source, rec: r.rec, recSummary: r.recSummary, recDetail: r.recDetail, minDays: r.minDays, arrive: r.arrive, sheet: r.sheet, text: r.text, at: r.at, colors: r.colors }))) });
+  await db.collection("esprim").doc("prod").set({ updatedAt: new Date(), rows: clean(prodRows) });
   const alerts = rows.filter((r) => r._new && r._rec && r._rec.mode > 0);
   let notified = 0;
   if (cfg.notifyRoomId && alerts.length) {
