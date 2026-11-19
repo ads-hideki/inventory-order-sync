@@ -180,7 +180,8 @@ export function recommend(lot, products, cfg, perBox, cost, groups = {}) {
   for (const it of lot.items) {
     const p = products[it.code]; if (!p) continue;
     const office = groups[it.code] === "事務所在庫"; items++; if (office) offices++;
-    const stock = ["office", "warehouse", "fba", "rsl"].reduce((s, k) => s + (Number(p[k]) || 0), 0), transit = Number(p.transit) || 0;
+    // 在庫がマイナスの倉庫（事務所在庫の引き当て超過など）は 0 として数える（マイナスのまま足すと日数がマイナスになり OCS が膨らむ）
+    const stock = ["office", "warehouse", "fba", "rsl"].reduce((s, k) => s + Math.max(0, Number(p[k]) || 0), 0), transit = Math.max(0, Number(p.transit) || 0);
     const daily = (Number(p.demand) || Number(p.monthly) || 0) / 30;
     const days = daily > 0 ? (stock + transit) / daily : Infinity;
     const box = (q) => (perBox > 0 ? Math.ceil(q / perBox) * perBox : q);
