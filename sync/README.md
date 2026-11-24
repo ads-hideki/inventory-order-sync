@@ -166,8 +166,14 @@ sync/
 
 - 発注管理の画面で入れたコンテナのお届け予定日は、**次の rp-sync の実行で**出荷依頼の入荷予定に反映されます（午後に入れた分は翌 0:15）。
 
-BL（ボーダーライン）は teps-2 の画面（`ec-dashboard/src/App.tsx` の `calcAuto`）と同じ式で計算し、
-`admin_settings/border_config` のモード（通常／セール前／手動%）に従います。
+BL（ボーダーライン）は teps-2 の画面（`ec-dashboard/src/App.tsx` の `blMap` / `calcAuto` と `src/sale.ts`）と同じ式で計算し、
+`admin_settings/border_config` の設定に従います（2026-11-24 に teps-2 の今の式へ合わせ直した）。
+- FBA: セールプリセット（`fba_preset`・種別の倍率・除外/対象品番・品番別の実績倍率 `sale_stats/_summary`・上限 `fba_mult_max`）、
+  セール日を除いた通常日平均 × 30 日への換算（`fba_exclude_sale_days`。`ec_sales/amazon` の `sale_days_*` と `qty_sale*`）
+- RSL: 月2回セールのモード（通常／セール前）× プリセットの RSL 倍率
+- トレンドの上乗せは 30 日売上金額が `trend_min_revenue` 以上の SKU だけ・上限 `trend_max_mult`
+- 売上の照合も teps-2 と同じ（旧 SKU の二重計上防止、Amazon は fnsku でも照合、楽天1 は SKU管理番号でも照合）
+- 確認方法: teps-2 の画面の「FBA BL」「RSL BL」と `rp_data/latest` の `fbaBL` / `rslBL` が一致すること
 **teps-2 側で式を変えたら `lib/rp.js` も合わせて直すこと。**
 
 Firestore の読み書きは 1 回の実行で読み取り3件・書き込み1〜3件に収まるよう、
