@@ -139,6 +139,8 @@ export async function fetchRpSource() {
   }
 
   const ufItems = {}; for (const [k, d] of Object.entries((uf && uf.items) || {})) ufItems[k.toUpperCase()] = (d && d.qty) || 0;
+  // UF 倉庫の在庫ファイルの「入数：カートン」（teps-2 の朝8時同期が inventory/uf の items[品番].carton に入れる。無い品番は null）
+  const ufCartons = {}; for (const [k, d] of Object.entries((uf && uf.items) || {})) { const n = Number(d && d.carton); if (Number.isInteger(n) && n > 0) ufCartons[k.toUpperCase()] = n; }
   const rslItems = {}; for (const [k, d] of Object.entries((rsl && rsl.items) || {})) rslItems[k.toLowerCase()] = (d && d.qty) || 0;
   const idx = {}; for (const ch of ["rakuten1", "rakuten2", "shopify", "yahoo", "qoo10"]) idx[ch] = upperIndex(sales[ch]);
 
@@ -189,6 +191,7 @@ export async function fetchRpSource() {
       fbaInbound: amazonSku ? (inbound[amazonSku.toUpperCase()] || 0) : 0,
       rslStock: Number(rslItems[r1key.toLowerCase()] ?? rslItems[r2key.toLowerCase()] ?? data.rsl_stock ?? 0) || 0,
       ufStock: ufItems[code] || 0,
+      ufCarton: ufCartons[code] || null,
     };
     const bl = calcBL(r, cfg, { window: win, summary });
     r.fbaBL = bl.fba; r.rslBL = bl.rsl; r.fbaMult = bl.fbaMult;   // fbaMult = この品番に掛けたセール倍率（1 = 通常）

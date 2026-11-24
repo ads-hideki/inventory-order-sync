@@ -72,10 +72,21 @@ async function main() {
       fbaCaseQty: null, rslCaseQty: null, active: true, isNew: true, createdAt: now.toISOString() };
     added.push(c);
   }
-  if (added.length) {
-    await itemsRef.set({ items, updatedAt: now }, { merge: true });
-    console.log(`[rp] 新規商品 ${added.length}件: ${added.join(", ")}`);
+  // 2-b) 入数は UF 倉庫の登録値（teps-2 の inventory/uf の carton）で毎回上書きする（2026-11-24 櫻井さんの指示。FBA・RSL とも同じ値）
+  //       carton が無い品番（UF の在庫ファイルに無い・入数が空）は、画面で入れた値のまま
+  let cartonSet = 0, cartonNone = 0;
+  for (const c of codes) {
+    const n = rows[c].ufCarton, it = items[c];
+    if (!(n > 0)) { cartonNone++; continue; }
+    if (it.fbaCaseQty === n && it.rslCaseQty === n && it.caseQtySource === "uf") continue;
+    it.fbaCaseQty = n; it.rslCaseQty = n; it.caseQtySource = "uf"; it.caseQtyUpdatedAt = now.toISOString(); it.isNew = false;
+    cartonSet++;
   }
+  if (added.length || cartonSet) {
+    await itemsRef.set({ items, updatedAt: now }, { merge: true });
+    if (added.length) console.log(`[rp] 新規商品 ${added.length}件: ${added.join(", ")}`);
+  }
+  console.log(`[rp] 入数（UF の登録値）: 更新 ${cartonSet}件 / UF に入数なし ${cartonNone}件`);
 
   // 3) 日次の在庫履歴（0 時台の回 = 前日の締め）
   const j = jstNow();
