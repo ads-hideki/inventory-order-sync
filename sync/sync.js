@@ -117,7 +117,7 @@ async function main() {
       try {
         const { cachePastSales } = await import("./lib/past_sales.js");
         const ps = await cachePastSales(db);
-        if (ps) console.log(`[sync] 過去の月別販売  ${ps.codes}型番・${ps.months}ヶ月分を取り込み`);
+        if (ps) console.log(`[sync] 過去の月別販売  ${ps.codes}型番・${ps.months}ヶ月分を取り込み${ps.patched.length ? `（シートが入力途中の月をシステムの記録で補った: ${ps.patched.join(", ")}）` : ""}`);
       } catch (e) { console.error("[sync] 過去の月別販売の取り込みに失敗（スキップ）:", e.message); }
     }
     // 季節性の参考データ（Amazon の月別販売・24ヶ月）を 1 日 1 回取り込む。失敗しても同期は続ける

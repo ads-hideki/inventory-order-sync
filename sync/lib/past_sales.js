@@ -63,6 +63,23 @@ export async function cachePastSales(db) {
   const d = parsePastSales(values);
   const codes = Object.keys(d.sales).length;
   if (codes < 50) throw new Error(`型番が少なすぎます（${codes}件）。シートの形が変わっていないか確認してください`);
-  await db.collection("cache").doc("pastSales").set({ updatedAt: new Date(), start: d.start, n: d.n, codes, json: JSON.stringify({ sales: d.sales, cat: d.cat }) });
-  return { codes, months: d.n, start: d.start };
+  // シートの直近の月が入力途中のことがある（2026-11-25: 10月の合計がシステムの記録の約 1/4 だった）。
+  // 終わった直近 2 ヶ月について、シートの合計がシステムの月次記録（salesHistory/YYYY-MM ＝ 翌月1日時点の直近30日販売）の 6 割未満なら、その月はシステムの記録で置き換える
+  const patched = [];
+  const [sy, sm] = d.start.split("-").map(Number), j = new Date(Date.now() + 9 * 3600 * 1000);
+  for (let back = 1; back <= 2; back++) {
+    const t = new Date(Date.UTC(j.getUTCFullYear(), j.getUTCMonth() - back, 1)), y = t.getUTCFullYear(), m = t.getUTCMonth() + 1;
+    const i = (y - sy) * 12 + (m - sm), key = `${y}-${String(m).padStart(2, "0")}`;
+    if (i < 0) continue;
+    const sh = (await db.collection("salesHistory").doc(key).get()).data(); if (!sh || !sh.data) continue;
+    let sheet = 0, sys = 0;
+    for (const [c, v] of Object.entries(sh.data)) { if (d.sales[c]) { sheet += d.sales[c][i] || 0; sys += Number(v) || 0; } }
+    if (sys > 0 && sheet < sys * 0.6) {
+      for (const [c, v] of Object.entries(sh.data)) { if (d.sales[c]) { while (d.sales[c].length <= i) d.sales[c].push(0); d.sales[c][i] = Math.round(Number(v) || 0); } }
+      if (i + 1 > d.n) d.n = i + 1;
+      patched.push(key);
+    }
+  }
+  await db.collection("cache").doc("pastSales").set({ updatedAt: new Date(), start: d.start, n: d.n, codes, patched, json: JSON.stringify({ sales: d.sales, cat: d.cat }) });
+  return { codes, months: d.n, start: d.start, patched };
 }
