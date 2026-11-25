@@ -1,8 +1,10 @@
 // 過去の月別販売数（Google スプレッドシート）を 1 日 1 回 cache/pastSales に取り込む。
 //   ・使うのは画面の「🧧 春節用の試算」だけ（季節の係数・昨年同期間の実績）。普段の発注計算には使わない
 //   ・読むだけで、シートには書かない
-//   ・設定は Firestore の settings/pastSales { sheetId, tab }（シート ID はコードに書かない。無ければ何もしない）
-//   ・シートの形: 1行目に「2021年」などの年（その年の最初の月の列）、2行目に「型番 / 品名 / バリ / 1月…12月 / … / カテゴリー1」、3行目から型番ごとの月別販売数
+//   ・設定は Firestore の settings/pastSales { sheetId, tab, catTab }（シート ID はコードに書かない。無ければ何もしない）
+//   ・シートの形: A 列が「型番」の行が見出し（「1月」…「12月」が並ぶ）。そのすぐ上の行に「2021年」などの年。見出しの下から型番ごとの月別販売数
+//     （見出しの上に説明の行があってもよい。2026-11-25 から teps-2 が自動更新する「月別販売数（モール別・SKU別）」の「合計」タブを読む。それまでは手入力の旧シート）
+//   ・カテゴリは、見出しに「カテゴリー1」の列があればそれ、無ければ catTab（「商品マスタ」タブ。型番・カテゴリー1 の列）から取る
 import { JWT } from "google-auth-library";
 import fs from "node:fs";
 
@@ -23,8 +25,10 @@ async function readValues(sheetId, range) {
 const num = (x) => { if (typeof x === "number") return x; const s = String(x ?? "").replace(/,/g, "").trim(); const v = Number(s); return s && Number.isFinite(v) ? v : 0; };
 
 // 表 → { start: "YYYY-MM", n: 月数, sales: {型番: [月別…]}, cat: {品番3桁: カテゴリ} }
-export function parsePastSales(values) {
-  const h0 = values[0] || [], h1 = values[1] || [];
+export function parsePastSales(values, catValues = null) {
+  const hr = values.findIndex((r) => String((r || [])[0] ?? "").trim() === "型番");
+  if (hr < 1) throw new Error("見出しの行（A 列が「型番」）を見つけられませんでした");
+  const h0 = values[hr - 1] || [], h1 = values[hr] || [];
   const cols = [];   // [{ col, y, m }]
   let year = null;
   for (let c = 0; c < h1.length; c++) {
@@ -37,7 +41,7 @@ export function parsePastSales(values) {
   const first = cols[0], idx = (y, m) => (y - first.y) * 12 + (m - first.m);
   const n = idx(cols[cols.length - 1].y, cols[cols.length - 1].m) + 1;
   const sales = {}, cat = {};
-  for (const r of values.slice(2)) {
+  for (const r of values.slice(hr + 1)) {
     const code = String(r[0] ?? "").trim().toUpperCase();
     if (!/^ADS\d{3}/.test(code)) continue;
     const v = new Array(n).fill(0);
@@ -48,6 +52,11 @@ export function parsePastSales(values) {
     sales[code] = v;
     const k = catCol >= 0 ? String(r[catCol] ?? "").trim() : "";
     if (k) cat[code.slice(3, 6)] = k;
+  }
+  // カテゴリが月別のタブに無い時は、別タブ（型番・カテゴリー1）から
+  if (catCol < 0 && catValues && catValues.length) {
+    const ch = catValues[0].map((x) => String(x ?? "")), cc = ch.findIndex((x) => x.trim() === "型番"), ck = ch.findIndex((x) => /カテゴリー?\s*1/.test(x));
+    if (cc >= 0 && ck >= 0) for (const r of catValues.slice(1)) { const code = String(r[cc] ?? "").trim().toUpperCase(), k = String(r[ck] ?? "").trim(); if (/^ADS\d{3}/.test(code) && k) cat[code.slice(3, 6)] = k; }
   }
   // 末尾の、どの型番も 0 の月は落とす（まだ来ていない月）
   let last = n - 1;
@@ -60,7 +69,9 @@ export async function cachePastSales(db) {
   const cfg = (await db.collection("settings").doc("pastSales").get()).data();
   if (!cfg || !cfg.sheetId) return null;
   const values = await readValues(cfg.sheetId, `${cfg.tab || "合計売上"}!A1:DZ`);
-  const d = parsePastSales(values);
+  let catValues = null;
+  if (cfg.catTab) { try { catValues = await readValues(cfg.sheetId, `${cfg.catTab}!A1:L`); } catch (e) { console.warn("[past] カテゴリのタブを読めませんでした（カテゴリ平均は使わず全体平均になります）:", e.message); } }
+  const d = parsePastSales(values, catValues);
   const codes = Object.keys(d.sales).length;
   if (codes < 50) throw new Error(`型番が少なすぎます（${codes}件）。シートの形が変わっていないか確認してください`);
   // シートの直近の月が入力途中のことがある（2026-11-25: 10月の合計がシステムの記録の約 1/4 だった）。
