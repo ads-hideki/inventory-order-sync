@@ -112,6 +112,14 @@ async function main() {
         if (z) console.log(`[sync] 在庫計算書  ${z.rows}件を書き出し（手入力を残した型番${z.kept}件${z.created ? "・タブを新規作成" : ""}）`);
       } catch (e) { console.error("[sync] 在庫計算書の書き出しに失敗（スキップ）:", e.message); }
     }
+    // 過去の月別販売数（Google スプレッドシート）を 1 日 1 回 cache/pastSales に取り込む（画面の「春節用の試算」用。--past-sales で今すぐ）。読むだけ。失敗しても同期は続ける
+    if (withStock || process.argv.includes("--past-sales")) {
+      try {
+        const { cachePastSales } = await import("./lib/past_sales.js");
+        const ps = await cachePastSales(db);
+        if (ps) console.log(`[sync] 過去の月別販売  ${ps.codes}型番・${ps.months}ヶ月分を取り込み`);
+      } catch (e) { console.error("[sync] 過去の月別販売の取り込みに失敗（スキップ）:", e.message); }
+    }
     // 季節性の参考データ（Amazon の月別販売・24ヶ月）を 1 日 1 回取り込む。失敗しても同期は続ける
     let keepaDone = false;
     if (CONFIG.keepa || meta.keepaDate !== today) {
