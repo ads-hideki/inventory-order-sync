@@ -74,19 +74,23 @@ async function main() {
   }
   // 2-b) 入数は UF 倉庫の登録値（teps-2 の inventory/uf の carton）で毎回上書きする（2026-11-24 櫻井さんの指示。FBA・RSL とも同じ値）
   //       carton が無い品番（UF の在庫ファイルに無い・入数が空）は、画面で入れた値のまま
-  let cartonSet = 0, cartonNone = 0;
+  //       「固定」（caseQtyFixed。設定画面で入数を手で直すと付く）の品番は上書きしない（UF の登録と実際の出荷単位が違う商品。例: 段ボールを入れ替える 003）
+  //       書き込むのは変わった品番だけ（画面での編集と同時になっても、ほかの品番を古い値で上書きしないため）
+  let cartonSet = 0, cartonNone = 0, cartonFixed = 0;
+  const patch = {}; for (const c of added) patch[c] = items[c];
   for (const c of codes) {
     const n = rows[c].ufCarton, it = items[c];
     if (!(n > 0)) { cartonNone++; continue; }
+    if (it.caseQtyFixed) { cartonFixed++; continue; }
     if (it.fbaCaseQty === n && it.rslCaseQty === n && it.caseQtySource === "uf") continue;
     it.fbaCaseQty = n; it.rslCaseQty = n; it.caseQtySource = "uf"; it.caseQtyUpdatedAt = now.toISOString(); it.isNew = false;
-    cartonSet++;
+    patch[c] = it; cartonSet++;
   }
-  if (added.length || cartonSet) {
-    await itemsRef.set({ items, updatedAt: now }, { merge: true });
+  if (Object.keys(patch).length) {
+    await itemsRef.set({ items: patch, updatedAt: now }, { merge: true });
     if (added.length) console.log(`[rp] 新規商品 ${added.length}件: ${added.join(", ")}`);
   }
-  console.log(`[rp] 入数（UF の登録値）: 更新 ${cartonSet}件 / UF に入数なし ${cartonNone}件`);
+  console.log(`[rp] 入数（UF の登録値）: 更新 ${cartonSet}件 / 固定で上書きしない ${cartonFixed}件 / UF に入数なし ${cartonNone}件`);
 
   // 3) 日次の在庫履歴（0 時台の回 = 前日の締め）
   const j = jstNow();
